@@ -3,5 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#pycharm
+.idea/
+
 #VirtualEnv
 env/
+
+exchange.json
