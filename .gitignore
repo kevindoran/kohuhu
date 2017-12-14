@@ -8,3 +8,5 @@ __pycache__/
 
 #VirtualEnv
 env/
+
+exchange.json
