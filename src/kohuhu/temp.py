@@ -3,13 +3,16 @@ from datetime import datetime
 from enum import Enum
 
 
-class MarketSpread(object):
+
+
+
+class MarketSpread:
     def __init__(self, exchange_id, highest_bid, lowest_ask):
         self.exchange_id = exchange_id
         self.highest_bid = highest_bid
         self.lowest_ask = lowest_ask
 
-class LimitAction(object):
+class LimitAction:
 
     class Type(Enum):
         ASK = 1
@@ -89,7 +92,7 @@ def get_actions(exchanges, profit_target):
             fee_factor = fee_as_factor(maker_fee_e1) * fee_as_factor(taker_fee_e2)
             bid_limit = fee_factor * market_spread_e2.highest_bid / profit_target
             if best_bid_action is None or best_bid_action.price < bid_limit:
-                best_bid_action = LimitAction(LimitAction.Type.ASK, e1, e2,
+                best_bid_action = LimitAction(LimitAction.Type.BID, e1, e2,
                                             bid_limit)
 
             # Calculate ask limit price.
@@ -141,6 +144,7 @@ bidLimits = []
 while True:
     if (datetime.now() - last_bid_ask_update_time).seconds > \
             bid_ask_update_period_secs:
+        last_bid_ask_update_time = datetime.now()
         askLimits, bidLimits = get_actions(exchanges, profit_before_amortized_costs)
         # Need some way of checking if orders are within some threshold of
         # existing ones; maybe we can have more responsive orders if we do them
