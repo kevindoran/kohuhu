@@ -9,4 +9,17 @@ __pycache__/
 #VirtualEnv
 env/
 
+# Tox
+.tox/
+
+# Tox or pytest, I'm not sure which creates this directory:
+.cache/
+
+# egg-info
+# I'm not sure if this needs/should be ignored as there isn't 
+# any non-relative info in there. However, it's auto-generated,
+# so I don't see any use of keeping it.
+src/kohuhu.egg-info/
+
+
 exchange.json
