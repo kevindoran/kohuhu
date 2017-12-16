@@ -1,0 +1,13 @@
+{
+  "email": {
+    // The account to send emails from. Must be Gmail.
+    "kohuhu_account" : {
+      "username": "example@gmail.com",
+      "display_name": "example_name",
+      "password": "example_password"
+    },
+
+    // Who to send emails to.
+    "recipients":[ "your_personal_email@somedomain.com", "anotheremail@example.com" ]
+  }
+}

@@ -6,6 +6,9 @@ __pycache__/
 #pycharm
 .idea/
 
+#vscode
+settings.json
+
 #VirtualEnv
 env/
 
@@ -21,5 +24,6 @@ env/
 # so I don't see any use of keeping it.
 src/kohuhu.egg-info/
 
-
+#Config files
+config.json
 exchange.json
