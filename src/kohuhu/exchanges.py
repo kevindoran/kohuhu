@@ -1,63 +1,107 @@
-import json
-import getpass
-import argparse
-import argcomplete
-import base64
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from decimal import Decimal
+import ccxt
+import kohuhu.credentials as credentials
+
+# Random comments:
+# Note: it looks like XBT is the newest symbol for Bitcoin markets.
+# Hmmm...maybe we don't need the market call.
+# btc_market = exchange(exchange_id).market('BTC/USD')
+
+# Utils
+
+def fee_as_factor(fee_percent):
+    """Convert a fee to it's effect as a factor.
+
+    For example: 0.008 (0.8%) gets converted to 0.9259 (4sf)
+    Note: 8% should be inputted as 0.08.
+    """
+    return Decimal(1) / (Decimal(1) + fee_percent)
 
 
-# TODO: This Python module can be used by main.py to read the JSON too.
+def fee_as_percentage(fee_factor):
+    """Convert a fee represented as a factor back to a percentage. """
+    return (Decimal(1) / fee_factor) - Decimal(1)
 
-def key_from_passphrase(passphrase):
-    salt = b'\xbf\xcc\x80\xfdv\xafJ\x19\xecN\xbb\xd0\xb1\xd4gW'
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt,
-                     iterations=100000, backend=default_backend())
-    key = base64.urlsafe_b64encode(kdf.derive(passphrase.encode()))
-    return key
 
-def encrypt(input, passphrase):
-    f = Fernet(key_from_passphrase(passphrase))
-    token = f.encrypt(input.encode())
-    return token
 
-def decrypt(input, passphrase):
-    f = Fernet(key_from_passphrase(passphrase))
-    output = f.decrypt(input).decode()
-    return output
+# Exchange methods.
 
-def main():
-    parser = argparse.ArgumentParser(description="Encrypt/decrypt exchange "
-                                                 "file.")
-    parser.add_argument("file", help="path to the exchange file", type=str)
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("-e", "--encrypt", help="encrypt the file",
-                        action="store_true")
-    group.add_argument("-d", "--decrypt", help="decrypt the file",
-                        action="store_true")
-    parser.add_argument("-o", "--output", help="encrypted or decrypted output",
-                        type=str, default="out")
-    # Argcomplete allows for terminal tab completion.
-    argcomplete.autocomplete(parser)
-    args = parser.parse_args()
+_exchanges = {}
+credentials.load_credentials()
 
-    passphrase = getpass.getpass(prompt="Passphrase:")
 
-    if args.encrypt:
-        with open(args.file) as input_file:
-            input = input_file.read()
-        output = encrypt(input, passphrase)
-        with open(args.output, "wb") as output_file:
-            output_file.write(output)
+def _load_exchange(id):
+    if id.endswith("_sandbox"):
+        is_sandbox = True
+        base_id = id[0:-len("_sandbox")]
+        exchange = getattr(ccxt, base_id)()
     else:
-        with open(args.file, "rb") as input_file:
-            input = input_file.read()
-        output = decrypt(input, passphrase)
-        with open(args.output, "w") as output_file:
-            output_file.write(output)
+        is_sandbox = False
+        exchange = getattr(ccxt, id)()
+    credentials.authorize(exchange, is_sandbox)
+    exchange.load_markets()
+    _exchanges[id] = exchange
 
-if __name__ == "__main__":
-    main()
+def exchange(id):
+    if id not in _exchanges:
+        _load_exchange(id)
+    return _exchanges[id]
 
+
+def btc_market_spread(exchange_id):
+    """Returns the BTC/USD market spread of the exchange.
+    :return: a MarketSpread object.
+    """
+    # We will likely need to some currency conversion here for when we deal with
+    # NZ markets.
+    # Reference: https://github.com/ccxt/ccxt/wiki/Manual#market-price
+    order_book_top = exchange(exchange_id).fetch_order_book('BTC/USD',
+                                                            {'depth': 1})
+    highest_bid = order_book_top['bids'][0]
+    lowest_ask = order_book_top['asks'][0]
+    highest_bid_price, highest_bid_amount = highest_bid if highest_bid else \
+        (None, None)
+    lowest_ask_price, lowest_ask_amount = lowest_ask if lowest_ask else \
+        (None, None)
+    spread =  MarketSpread(
+                    exchange_id,
+                    highest_bid=Order(highest_bid_price, highest_bid_amount),
+                    lowest_ask=Order(lowest_ask_price, lowest_ask_amount))
+    return spread
+
+def fees(exchange_id):
+    # Getting the maker taker fees is exchange dependent.
+    if exchange_id == 'gdax':
+        gdax = exchange(exchange_id)
+        fees = gdax.fees['trading']
+        maker_fee = fees['maker']
+        taker_fee = fees['taker']
+    elif exchange_id == 'gemini':
+        # Some hard-coding, as Gemini doesn't have their fees exposed in their
+        # API (thus, isn't in ccxt). Their fees are dynamic. But unless we start
+        # trading very large amounts, the fees are (as of 2017-12-17):
+        maker_fee = 0.0025
+        taker_fee = 0.0025
+    else:
+        raise Exception("The fees for the exchange: {} are unknown.".format(
+            exchange_id))
+    return Fees(maker_fee, taker_fee)
+
+
+class Fees:
+    def __init__(self, maker, taker):
+        self.maker = maker
+        self.taker = taker
+
+
+class Order:
+    def __init__(self, price, amount):
+        self.price = price
+        self.amount = amount
+
+
+class MarketSpread:
+    def __init__(self, exchange_id, highest_bid, lowest_ask):
+            self.exchange_id = exchange_id
+            self.highest_bid = highest_bid
+            self.lowest_ask = lowest_ask

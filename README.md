@@ -36,6 +36,16 @@ Alternative, from the directory, test:
 
     pytest
 
+If you want to print std output of a test, run:
+
+    pytest -s
+
+I'm not sure how to pass this argument to pytest from tox yet.
+
+Run a single test file like so:
+
+pytest ./test/test_encryption.py
+
 ### Possible install of kohuhu needed
 Installing kohuhu is needed run the tests if you use the `pytest` option. Install kohuhu in development 
 mode via either:

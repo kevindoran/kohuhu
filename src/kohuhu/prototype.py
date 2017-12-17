@@ -1,16 +1,9 @@
 import time
 from datetime import datetime
 from enum import Enum
+from decimal import Decimal
+import kohuhu.exchanges as exchanges
 
-
-
-
-
-class MarketSpread:
-    def __init__(self, exchange_id, highest_bid, lowest_ask):
-        self.exchange_id = exchange_id
-        self.highest_bid = highest_bid
-        self.lowest_ask = lowest_ask
 
 class LimitAction:
 
@@ -18,7 +11,7 @@ class LimitAction:
         ASK = 1
         BID = 2
 
-    def __init__(self, type, on_exchange, mirror_on_exchange, price):
+    def __init__(self, type, on_exchange, counter_on_exchange, price):
         self.type = type
         self.on_exchange = on_exchange
         # Profit is a function of price difference and fees. Thus,
@@ -26,31 +19,12 @@ class LimitAction:
         # you will be selling on, and what profit you are likely to get.
         # Probably doesn't need to be stored here, as it will be recalculated
         # when selling anyway. Including so I don't forget that it's important.
-        self.mirror_on_exchange = mirror_on_exchange
+        self.counter_on_exchange = counter_on_exchange
         self.price = price
 
-def fee_as_factor(fee_as_percent):
-    """
-    Convert a fee such as 0.008 (0.8%) to it's effect as a factor, 0.9259 (4sf).
-
-    Note: 8% should be inputted as 0.08.
-    """
-    return 1 / ( 1 + fee_as_percent)
-
-def fee_as_percentage(fee_as_factor):
-    """
-    Convert a fee represented as a factor back to a percentage.
-    """
-    return (1 / fee_as_factor) - 1
-
-def get_fees(exchange):
-    return None, None
 
 def submit_order(order):
     pass
-
-def get_market_spread(exchange):
-    return MarketSpread(None, None, None)
 
 def get_cross_market_spread(exchanges):
     """
@@ -75,12 +49,13 @@ def get_actions(exchanges, profit_target):
         best_ask_action = None
         best_bid_action = None
         for e2 in exchanges:
-            maker_fee_e1, taker_fee_e1 = get_fees(e1)
-            maker_fee_e2, taker_fee_e2 = get_fees(e2)
-            market_spread_e1 = get_market_spread(e1)
-            market_spread_e2 = get_market_spread(e2)
+            maker_fee_e1, taker_fee_e1 = exchanges.fees(e1)
+            maker_fee_e2, taker_fee_e2 = exchanges.fees(e2)
+            market_spread_e1 =  exchanges.market_spread(e1)
+            market_spread_e2 = exchanges.market_spread(e2)
 
             # Calculate bid limit price.
+            # TODO: work through an example on each line.
             # Create bid limit on e1, sell at market on e2
             # Note: fee_factor is always less than 1. E.g., fee listed as 0.8
             # becomes a fee factor: 1/(1+0.08) = 0.926
@@ -89,7 +64,8 @@ def get_actions(exchanges, profit_target):
             # profit_factor / fee_factor = e2.highest_bid/bid_limit
             # fee_factor / profit_factor = bid_limit / e2.highest_bid
             # bid_limit = fee_factor * e2.highest_bid / profit_factor
-            fee_factor = fee_as_factor(maker_fee_e1) * fee_as_factor(taker_fee_e2)
+            fee_factor = exchanges.fee_as_factor(maker_fee_e1) * \
+                         exchanges.fee_as_factor(taker_fee_e2)
             bid_limit = fee_factor * market_spread_e2.highest_bid / profit_target
             if best_bid_action is None or best_bid_action.price < bid_limit:
                 best_bid_action = LimitAction(LimitAction.Type.BID, e1, e2,
