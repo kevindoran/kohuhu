@@ -26,4 +26,4 @@ src/kohuhu.egg-info/
 
 #Config files
 config.json
-exchange.json
+exchanges.json
