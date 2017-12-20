@@ -1,8 +1,6 @@
 
-
-
 class ExchangeSlice:
-    """Data from multiple exchanges at a point in time.
+    """Data from a single at a point in time.
 
     Note: I'm not sure what data is needed and how granular it should be given.
     I just guessed at some simple methods to begin with.
@@ -27,13 +25,60 @@ class Algorithm:
     data and to check the behaviour of the actions without having them run.
     """
     def __init__(self):
+        self.exchanges = []
         pass
 
-    def initialize(self):
-        raise NotImplementedError("Subclasses should implement this method.")
+    def initialize(self, exchanges_to_use):
+        self.exchanges = exchanges_to_use
 
     def on_data(self, slice):
         raise NotImplementedError("Subclasses should implement this method.")
+
+
+class Action:
+    """An action to run on an exchange."""
+
+    def __init__(self):
+        pass
+
+    def name(self):
+        raise NotImplementedError("Subclasses should implement this method.")
+
+    def __repr__(self):
+        raise NotImplementedError("Subclasses should implement this method.")
+
+
+class LimitOrder(Action):
+
+    def __init__(self):
+        super().__init__()
+
+    def name(self):
+        pass
+
+    def __repr__(self):
+        pass
+
+
+class Executor:
+    """Executes actions for one or multiple exchange."""
+
+    def __init__(self, supported_exchanges):
+        self._supported_exchanges = supported_exchanges
+
+    def execute(self, action, on_exchange):
+        """Executes an action on an exchange.
+
+         The default implementation simply prints the action details.
+
+         Args:
+             action (Action): the action to run.
+             on_exchange (str): the id of the exchange to run the action on.
+         """
+        if on_exchange not in self.supported_exchanges:
+            raise Exception("This executor doesn't support the exchange {}."
+                            .format(on_exchange))
+        print("Action requested on exchange {}: {}".format(on_exchange, action))
 
 
 class Fetcher:
@@ -70,7 +115,14 @@ class Fetcher:
 class Slice:
     """Combines exchange slices."""
     def __init__(self):
-        self.exchange_slices = {}
+        self._exchange_slices = {}
+
+    def for_exchange(self, exchange_id):
+        return self._exchange_slices[exchange_id]
+
+    def set_slice(self, exchange_id, exchange_slice):
+        self._exchange_slices[exchange_id] = exchange_slice
+
 
 class Trader:
     """Runs algorithms.
