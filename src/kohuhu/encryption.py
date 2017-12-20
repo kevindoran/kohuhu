@@ -27,12 +27,13 @@ def decrypt(input, passphrase):
     return output
 
 
-def prompt_for_passphrase():
+def prompt_for_passphrase(confirm=False):
     passphrase = getpass.getpass(prompt="Passphrase (for exchange file):")
-    passphrase_again = getpass.getpass(prompt="Passphrase confirm:")
-    if passphrase != passphrase_again:
-        print("Passphrases do not match. Exiting.")
-        exit(1)
+    if confirm:
+        passphrase_again = getpass.getpass(prompt="Passphrase confirm:")
+        if passphrase != passphrase_again:
+            print("Passphrases do not match. Exiting.")
+            exit(1)
     return passphrase
 
 
@@ -51,15 +52,16 @@ def main():
     argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
-    passphrase = prompt_for_passphrase()
 
     if args.encrypt:
+        passphrase = prompt_for_passphrase(confirm=True)
         with open(args.file) as input_file:
             input = input_file.read()
         output = encrypt(input, passphrase)
         with open(args.output, "wb") as output_file:
             output_file.write(output)
     else:
+        passphrase = prompt_for_passphrase()
         with open(args.file, "rb") as input_file:
             input = input_file.read()
         output = decrypt(input, passphrase)

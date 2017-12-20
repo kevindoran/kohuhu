@@ -1,8 +1,13 @@
 import pytest
 from kohuhu import exchanges
+from kohuhu import credentials
 import decimal
 from decimal import Decimal
 
+
+@pytest.fixture(autouse=True)
+def load_creds():
+    credentials.load_credentials()
 
 def test_fee_as_factor():
     # Setup
@@ -70,26 +75,55 @@ def test_btc_market_spread():
     assert market_spread.lowest_ask.price > market_spread.highest_bid.price
 
 
-@pytest.fixture
-def gdax_sandbox():
-    gdax_sandbox_id = 'gdax_sandbox'
-    exchanges.load_exchange(gdax_sandbox_id, with_authorization=True)
-    sandbox = exchanges.exchange(gdax_sandbox_id)
-    return sandbox
+# @pytest.fixture
+# @pytest.mark.skip(reason="Gdax sandbox seems to be down.")
+# @pytest.mark.parameterize("exchange_id", ["gdax_sandbox, gemini_sandbox"])
 
 @pytest.mark.skip(reason="Gdax sandbox seems to be down.")
-def test_get_balance(gdax_sandbox):
-    assert gdax_sandbox is not None
+def test_get_balance():
+    gdax_sandbox = exchanges.load_exchange("gdax_sandbox")
     # I'm not sure when the sandbox balance will change from zero.
     balance_json = gdax_sandbox.fetch_balance()
     assert Decimal(balance_json['BTC']['free']) == Decimal(0)
     assert Decimal(balance_json['GBP']['free']) == Decimal(0)
 
-@pytest.mark.skip(reason="Gdax sandbox seems to be down.")
-def test_make_limit_buy_order(gdax_sandbox):
+#@pytest.mark.skip(reason="Gdax sandbox seems to be down.")
+#@pytest.mark.parametrize("exchange_id", [#"gdax_sandbox",
+#                                         "gemini_sandbox"])
+def test_make_limit_buy_order_gemini():
+    exchange = exchanges.load_exchange("gemini_sandbox",
+                                       with_authorization=True)
     amount_in_btc = 0.2
-    gdax_sandbox.createLimitBuyOrder('USD/BTC',
-                                     amount=amount_in_btc, side="buy",
-                                     type="limit")
+    price = 5000
+    res = exchange.create_limit_buy_order('BTC/USD', amount_in_btc, 5000)
+    # Example result:
+    # {'order_id': '88040204', 'id': '88040204', 'symbol': 'btcusd',
+    #  'exchange': 'gemini', 'avg_execution_price': '0.00', 'side': 'buy',
+    #  'type': 'exchange limit', 'timestamp': '1513748090',
+    #  'timestampms': 1513748090914, 'is_live': True, 'is_cancelled': False,
+    #  'is_hidden': False, 'was_forced': False, 'executed_amount': '0',
+    #  'remaining_amount': '1.1', 'client_order_id': '1513748090',
+    #  'options': [], 'price': '10.00',
+    #  'original_amount': '1.1'}, 'id': '88040204'}
+    order_id = res['info']['order_id']
+    order_status = request_gemini_order_status(exchange, order_id)
+
+
+def request_gemini_order_status(exchange, order_id):
+    res = exchange.request('order/status', api='private', method='POST',
+                     params={'order_id':order_id})
+    # Example result:
+    # {'order_id': '88040204', 'id': '88040204', 'symbol': 'btcusd',
+    #  'exchange': 'gemini', 'avg_execution_price': '0.00', 'side': 'buy',
+    #  'type': 'exchange limit', 'timestamp': '1513748090',
+    #  'timestampms': 1513748090914, 'is_live': True, 'is_cancelled': False,
+    #  'is_hidden': False, 'was_forced': False, 'executed_amount': '0',
+    #  'remaining_amount': '1.1', 'client_order_id': '1513748090', 'options': [],
+    #  'price': '10.00', 'original_amount': '1.1'}
+
+
+
+
+
 
 
