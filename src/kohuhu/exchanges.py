@@ -1,6 +1,6 @@
 from decimal import Decimal
 import ccxt
-import kohuhu.credentials as credentials
+import kohuhu.credentials
 
 # Random comments:
 # Note: it looks like XBT is the newest symbol for Bitcoin markets.
@@ -23,28 +23,35 @@ def fee_as_percentage(fee_factor):
     return (Decimal(1) / fee_factor) - Decimal(1)
 
 
-
 # Exchange methods.
 
 _exchanges = {}
-credentials.load_credentials()
+kohuhu.credentials.load_credentials()
 
 
-def _load_exchange(id):
+def load_exchange(id, with_authorization=False):
+    # Inspired from: https://github.com/ccxt/ccxt/issues/369
+    base_id = id
     if id.endswith("_sandbox"):
         is_sandbox = True
         base_id = id[0:-len("_sandbox")]
-        exchange = getattr(ccxt, base_id)()
     else:
         is_sandbox = False
-        exchange = getattr(ccxt, id)()
-    credentials.authorize(exchange, is_sandbox)
+    exchange = getattr(ccxt, base_id)()
+    cred = kohuhu.credentials.credentials_for(id)
+    if with_authorization and not cred:
+        raise Exception("Failed to authorize access to exchange {}.".format(id))
+    # Note: the following if could be: if credentials, if we want to authorize
+    # by default, if available.
+    if with_authorization:
+        cred.authorize(exchange)
     exchange.load_markets()
     _exchanges[id] = exchange
 
+
 def exchange(id):
     if id not in _exchanges:
-        _load_exchange(id)
+        load_exchange(id)
     return _exchanges[id]
 
 
@@ -68,6 +75,7 @@ def btc_market_spread(exchange_id):
                     highest_bid=Order(highest_bid_price, highest_bid_amount),
                     lowest_ask=Order(lowest_ask_price, lowest_ask_amount))
     return spread
+
 
 def fees(exchange_id):
     # Getting the maker taker fees is exchange dependent.

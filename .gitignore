@@ -26,4 +26,6 @@ src/kohuhu.egg-info/
 
 #Config files
 config.json
-exchanges.json
+
+# Credentials
+api_credentials.json

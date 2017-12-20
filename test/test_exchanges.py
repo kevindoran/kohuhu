@@ -73,9 +73,11 @@ def test_btc_market_spread():
 @pytest.fixture
 def gdax_sandbox():
     gdax_sandbox_id = 'gdax_sandbox'
+    exchanges.load_exchange(gdax_sandbox_id, with_authorization=True)
     sandbox = exchanges.exchange(gdax_sandbox_id)
     return sandbox
 
+@pytest.mark.skip(reason="Gdax sandbox seems to be down.")
 def test_get_balance(gdax_sandbox):
     assert gdax_sandbox is not None
     # I'm not sure when the sandbox balance will change from zero.
@@ -83,5 +85,11 @@ def test_get_balance(gdax_sandbox):
     assert Decimal(balance_json['BTC']['free']) == Decimal(0)
     assert Decimal(balance_json['GBP']['free']) == Decimal(0)
 
+@pytest.mark.skip(reason="Gdax sandbox seems to be down.")
+def test_make_limit_buy_order(gdax_sandbox):
+    amount_in_btc = 0.2
+    gdax_sandbox.createLimitBuyOrder('USD/BTC',
+                                     amount=amount_in_btc, side="buy",
+                                     type="limit")
 
 
