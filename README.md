@@ -8,7 +8,7 @@ Decrypt the exchange API information via:
 Encrypt it again via:
 ..
 
-    python ./src/kohuhu/encryption.py --encrypt api_credentials.json -o=exchanges.json.encrypted
+    python ./src/kohuhu/encryption.py --encrypt api_credentials.json -o=api_credentials.json.encrypted
     
 If you get sick of bash not auto-completing Python scripts, 
 from the Python env, run:
