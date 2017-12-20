@@ -10,7 +10,6 @@ cffi==1.11.2
 chardet==3.0.4
 cryptography==2.1.4
 idna==2.6
--e git+git@bitbucket.org:tgrunshaw/kohuhu.git@edf1513d462035c667c175f1b8c7214357d906cb#egg=kohuhu
 multidict==3.3.2
 pkg-resources==0.0.0
 pluggy==0.6.0
