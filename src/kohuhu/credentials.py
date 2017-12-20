@@ -5,7 +5,7 @@ import kohuhu.encryption as encryption
 default_credential_file_encrypted = 'api_credentials.json.encrypted'
 default_credential_file = 'api_credentials.json'
 
-_credentials = {}
+_credentials = []
 
 class ApiCredentials:
     def __init__(self, ccxt_id, owner, key, secret, passphrase, url):
@@ -25,14 +25,20 @@ class ApiCredentials:
             exchange.urls['api'] = self.api_url
 
 
-def credentials_for(exchange_id):
-    found_credential = exchange_id in _credentials
-    if found_credential:
-        logging.info("Found credentials for: {}.".format(exchange_id))
+def credentials_for(exchange_id, owner=None):
+    cred = None
+    for c in _credentials:
+        if c.ccxt_id == exchange_id and (owner is None or c.owner == owner):
+            cred = c
+    if cred:
+        logging.info("Found credentials for exchange ({}) and owner({})."
+                     .format(exchange_id, owner if owner else "any"))
     else:
-        logging.info("No credentials for: {}. Available credentials include:\n"
-                     "{}".format(exchange_id, '\n'.join(_credentials.keys())))
-    return _credentials.get(exchange_id, None)
+        logging.info("No credentials for exchange ({}) and owner({}).\n"
+                     .format(exchange_id, owner if owner else "any") +
+                     "Available credentials are: " + ",".join("({}:{})"
+                     .format(c.ccxt_id, c.owner) for c in _credentials))
+    return cred
 
 
 def load_credentials(credential_file=default_credential_file,
@@ -46,12 +52,10 @@ def load_credentials(credential_file=default_credential_file,
     else:
         with open(credential_file, 'r') as f:
             input = f.read()
-    credential_list = parse_credentials(input)
-    # Convert to a map.
     global _credentials
-    _credentials = {c.ccxt_id: c for c in credential_list}
-    logging.info("Loaded credentials for exchanges: {}.".format(
-        ",".join(_credentials.keys())))
+    _credentials = parse_credentials(input)
+    logging.info("Loaded credentials (exchange:owner): {}.".format(",".join(
+        ("({}, {})".format(c.ccxt_id, c.owner) for c in _credentials))))
 
 
 def parse_credentials(input):

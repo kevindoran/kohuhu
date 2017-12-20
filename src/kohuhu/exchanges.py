@@ -26,7 +26,6 @@ def fee_as_percentage(fee_factor):
 # Exchange methods.
 
 _exchanges = {}
-kohuhu.credentials.load_credentials()
 
 
 def load_exchange(id, with_authorization=False):
@@ -47,6 +46,7 @@ def load_exchange(id, with_authorization=False):
         cred.authorize(exchange)
     exchange.load_markets()
     _exchanges[id] = exchange
+    return exchange
 
 
 def exchange(id):

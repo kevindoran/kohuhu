@@ -8,9 +8,8 @@ def test_load_credentials():
     kohuhu.credentials.load_credentials("api_credentials.json.example.encrypted",
                                         decrypt_first=True,
                                         passphrase=passphrase)
-    print(kohuhu.credentials._credentials)
     assert len(kohuhu.credentials._credentials) == 1
-    credentials = kohuhu.credentials._credentials['independentreserve']
+    credentials = kohuhu.credentials.credentials_for('independentreserve')
     assert credentials.owner == "kevin"
     assert credentials.api_key == "removed. See the encrypted version."
     assert credentials.api_secret == "removed. See the encrypted version."
