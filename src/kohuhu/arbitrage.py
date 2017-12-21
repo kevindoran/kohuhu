@@ -14,10 +14,11 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.exchange_buy_on = None
         self.exchange_sell_on = None
         self.live_limit_order = None
-        self.market_order = None
+        self.market_orders = []
         self.max_bid_amount_in_btc = Decimal(0.5)
         self.bid_amount_in_btc = Decimal(0.5)
-        self.profit_target = Decimal(0.05) # percent.
+        self.previous_fill_amount = Decimal(0)
+        self.profit_target = Decimal(0.05)  # percent.
 
     def initialize(self, exchanges_to_use):
         if len(exchanges_to_use) != 2:
@@ -28,6 +29,7 @@ class OneWayPairArbitrage(trader.Algorithm):
 
     def on_data(self, slice):
         if not self.live_limit_order:
+            # No buy limit action has been created yet. Make one.
             # Calculate the BTC market price on the exchange to sell on.
             order_book = slice.for_exchange(self.exchange_sell_on).order_book
             sell_price = self.calculate_effective_sell_price(
@@ -44,32 +46,55 @@ class OneWayPairArbitrage(trader.Algorithm):
                                      amount=self.bid_amount_in_btc,
                                      price=bid_price)
             self.live_limit_order = bid_action
-            return [bid_action,]
+            return [bid_action, ]
         else:
-            # TODO check to see if the order has been met.
+            # We have a buy limit action.
             if self.live_limit_order.order_id is not None:
-                # The order has been placed.
-                order = slice.for_exchange(self.exchange_buy_on)\
+                # The action has been executed and the order has been placed.
+                # Every time the order gets more filled, make a market sell
+                # order on the other exchange by the fill amount.
+                order = slice.for_exchange(self.exchange_buy_on) \
                     .order(self.live_limit_order.order_id)
                 if order['amount'] == 0:
-                    raise Exception("Ops, we made an order for 0 BTC. Something"
-                                    " isn't right.")
-                # FIXME: need to act on partially filled orders too.
-                if order['remaining'] == 0:
-                    logging.info("Order action has been placed, and is "
-                                 "completed. About to create a sell order on"
-                                 "the second exchange.")
-                    # Our order has completed! So lets execute a market sell.
-                    # The market may have moved since we placed our limit order.
-                    # TODO: should be buy anyway?
+                    raise Exception("Ops, we made an order for 0 BTC on {}. "
+                                    "Something isn't right."
+                                    .format(self.exchange_buy_on))
+                fill_amount = Decimal(order['filled'])
+                if fill_amount > self.bid_amount_in_btc:
+                    raise Exception(
+                        "Something isn't right. Our order {} got filled ({}) "
+                        "more than the amount we placed ({}) on {}."
+                            .format(self.live_limit_order.order_id,
+                                    order['filled'],
+                                    self.bid_amount_in_btc,
+                                    self.exchange_buy_on))
+
+                if fill_amount > self.previous_fill_amount:
+                    # Our buy order has been filled more, lets create a sell
+                    # order on the other exchange.
+                    fill_diff = fill_amount - self.previous_fill_amount
+                    logging.info(
+                        "The limit buy order ({}) has been filled more (prev "
+                        "fill: {}, current: {}). About to place a market sell "
+                        "order for {} on {}.".format(
+                            self.live_limit_order.order_id,
+                            self.previous_fill_amount, fill_amount, fill_diff,
+                            self.exchange_sell_on))
                     marketBidAction = CreateOrder(self.exchange_sell_on,
                                                   CreateOrder.Side.ASK,
                                                   CreateOrder.Type.MARKET,
-                                                  amount=self.bid_amount_in_btc)
-                    # I'm not sure if we need this again. Maybe good to check
-                    # that the order succeeded.
-                    self.market_order = marketBidAction
-                    self.live_limit_order = None
+                                                  amount=fill_diff)
+
+                    # Store the order action, although I'm not sure if we
+                    # will need them again. Maybe for logging.
+                    self.market_orders.append(marketBidAction)
+
+                    if fill_amount == self.bid_amount_in_btc:
+                        logging.info("Our buy limit order ({}) on {} has been "
+                                     "fully filled."
+                                     .format(self.live_limit_order.order_id,
+                                     self.exchange_buy_on))
+                        self.live_limit_order = None
                     return [marketBidAction]
                 else:
                     logging.info("Order action has been placed, but it's not "
