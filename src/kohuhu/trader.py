@@ -56,7 +56,7 @@ class ExchangeSlice:
         return self._order_book
 
     @order_book.setter
-    def set_order_book(self, in_order_book):
+    def order_book(self, in_order_book):
         self._order_book = in_order_book
 
     def order(self, order_id):
@@ -98,7 +98,7 @@ class ExchangeSlice:
         return self._balance
 
     @balance.setter
-    def set_balance(self, balance):
+    def balance(self, balance):
         self._balance = balance
 
 class Algorithm:
@@ -171,9 +171,9 @@ class OrderAction(Action):
 
     @Action.name.getter
     def name(self):
-        side_name = self.side.name.lower
+        side_name = self.side.name.lower()
         side_name = side_name[:1].upper() + side_name[1:]
-        type_name = self.type.name.lower
+        type_name = self.type.name.lower()
         type_name = type_name[:1].upper() + type_name[1:]
         return "{} {} order".format(type_name, side_name)
 
@@ -318,4 +318,5 @@ class Trader:
 
     def step(self):
         self.last_actions = self._algorithm.on_data(self.next_slice)
+        print(self.last_actions)
         return self.last_actions

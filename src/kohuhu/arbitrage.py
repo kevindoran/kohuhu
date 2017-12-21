@@ -16,7 +16,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.market_order = None
         self.max_bid_amount_in_btc = Decimal(0.5)
         self.bid_amount_in_btc = Decimal(0.5)
-        self.profit_target = 0.05 # percent.
+        self.profit_target = Decimal(0.05) # percent.
 
     def initialize(self, exchanges_to_use):
         if len(exchanges_to_use) != 2:
@@ -43,7 +43,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                                      amount=self.bid_amount_in_btc,
                                      price=bid_price)
             self.live_limit_order = bid_action
-            return bid_action
+            return [bid_action,]
         else:
             # TODO check to see if the order has been met.
             if self.live_limit_order.order_id is not None:
@@ -64,17 +64,16 @@ class OneWayPairArbitrage(trader.Algorithm):
                     # that the order succeeded.
                     self.market_order = marketBidAction
                     self.live_limit_order = None
-                    return marketBidAction
+                    return [marketBidAction,]
             else:
                 # The order hasn't been placed yet. Nothing to do.
-                return None
-
+                return []
 
     @staticmethod
     def calculate_effective_sell_price(sell_amount, order_book):
         """Calculates the effective price on a market for the given amount."""
         capacity_counted = Decimal(0)
-        bid_index = Decimal(0)
+        bid_index = 0
         effective_market_price = Decimal(0)
         filled = Decimal(0)
         remaining = sell_amount
@@ -86,14 +85,15 @@ class OneWayPairArbitrage(trader.Algorithm):
             fraction_of_trade = amount_used / sell_amount
             effective_market_price += fraction_of_trade * price
             capacity_counted += bid_amount
+            bid_index += 1
         return effective_market_price
 
     @staticmethod
-    def calculate_bid_limit_price(cls, exchange_to_buy_on, exchange_to_sell_on,
+    def calculate_bid_limit_price(exchange_to_buy_on, exchange_to_sell_on,
                                   market_price_to_sell, profit_target):
         """Calculates the bid price needed to make the given profit."""
-        buy_maker_fee = exchanges.fees(exchange_to_buy_on)[0]
-        sell_taker_fee = exchanges.fees(exchange_to_sell_on)[1]
+        buy_maker_fee = exchanges.fees(exchange_to_buy_on).maker
+        sell_taker_fee = exchanges.fees(exchange_to_sell_on).taker
 
         # Calculate bid limit price.
         # TODO: work through an example on each line.
