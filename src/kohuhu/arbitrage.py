@@ -89,6 +89,11 @@ class OneWayPairArbitrage(trader.Algorithm):
         effective_market_price = Decimal(0)
         remaining = sell_amount
         while capacity_counted < sell_amount:
+            if bid_index >= len(order_book['bids']):
+                raise Exception("Something is not right: there is only {} BTC "
+                                "buy orders on an exchange. We wont be able to "
+                                "fill our market order. Something is probably "
+                                "broken.".format(capacity_counted))
             next_highest_bid = order_book['bids'][bid_index]
             # TODO: can we get a clean way to separate the amount and price
             # information better?
@@ -99,8 +104,6 @@ class OneWayPairArbitrage(trader.Algorithm):
             effective_market_price += fraction_of_trade * price
             capacity_counted += bid_amount
             bid_index += 1
-            if bid_index >= len(order_book['bids']):
-                break
         return effective_market_price
 
     @staticmethod
