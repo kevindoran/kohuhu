@@ -1,5 +1,5 @@
 from enum import Enum, auto
-
+from datetime import datetime
 
 class ExchangeSlice:
     """Data from a single at a point in time.
@@ -126,8 +126,8 @@ class Algorithm:
 class Action:
     """An action to run on an exchange."""
 
-    def __init__(self):
-        pass
+    def __init__(self, exchange_id):
+        self.exchange = exchange_id
 
     @property
     def name(self):
@@ -163,8 +163,7 @@ class CreateOrder(Action):
         LIMIT = auto()
 
     def __init__(self, exchange_id, side, type, amount, price=None):
-        super().__init__()
-        self.exchange = exchange_id
+        super().__init__(exchange_id)
         self.amount = amount
         self.price = price
         self.side = side
@@ -186,8 +185,8 @@ class CreateOrder(Action):
 class CancelOrder(Action):
     """Represents the action of cancelling an order."""
 
-    def __init__(self, order_id):
-        super().__init__()
+    def __init__(self, order_id, exchange_id):
+        super().__init__(exchange_id)
         self.order_id = order_id
 
     @Action.name.getter
@@ -204,7 +203,7 @@ class Executor:
     def __init__(self, supported_exchanges):
         self._supported_exchanges = supported_exchanges
 
-    def execute(self, action, on_exchange):
+    def execute(self, action):
         """Executes an action on an exchange.
 
          The default implementation simply prints the action details.
@@ -213,10 +212,11 @@ class Executor:
              action (Action): the action to run.
              on_exchange (str): the id of the exchange to run the action on.
          """
-        if on_exchange not in self.supported_exchanges:
+        if action.exchange not in self.supported_exchanges:
             raise Exception("This executor doesn't support the exchange {}."
-                            .format(on_exchange))
-        print("Action requested on exchange {}: {}".format(on_exchange, action))
+                            .format(action.exchange))
+        print("Action requested on exchange {}: {}".format(action.exchange,
+                                                           action))
 
 
 class Fetcher:
@@ -263,9 +263,15 @@ class Fetcher:
 
 
 class Slice:
-    """Combines exchange slices."""
+    """Combines exchange slices.
+
+    Attributes:
+        created_at (datetime.Datetime): the time the slice was created.
+    """
+
     def __init__(self):
         self._exchange_slices = {}
+        self.timestamp = datetime.now()
 
     def for_exchange(self, exchange_id):
         return self._exchange_slices[exchange_id]
