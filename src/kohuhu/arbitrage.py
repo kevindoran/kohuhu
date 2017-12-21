@@ -20,10 +20,10 @@ class OneWayPairArbitrage(trader.Algorithm):
 
     def initialize(self, exchanges_to_use):
         if len(exchanges_to_use) != 2:
-            raise Exception("OneWayPairArbitrage uses 2 exchanges, {} given."
-                            .format(len(exchanges_to_use)))
+            raise Exception("OneWayPairArbitrage uses 2 exchanges, but {} were"
+                            " given.".format(len(exchanges_to_use)))
         self.exchange_buy_on = exchanges_to_use[0]
-        self.exchange_sell_on = exchanges_to_use[0]
+        self.exchange_sell_on = exchanges_to_use[1]
 
     def on_data(self, slice):
         if not self.live_limit_order:
@@ -72,6 +72,7 @@ class OneWayPairArbitrage(trader.Algorithm):
 
     @staticmethod
     def calculate_effective_sell_price(sell_amount, order_book):
+        """Calculates the effective price on a market for the given amount."""
         capacity_counted = Decimal(0)
         bid_index = Decimal(0)
         effective_market_price = Decimal(0)
@@ -90,6 +91,7 @@ class OneWayPairArbitrage(trader.Algorithm):
     @staticmethod
     def calculate_bid_limit_price(cls, exchange_to_buy_on, exchange_to_sell_on,
                                   market_price_to_sell, profit_target):
+        """Calculates the bid price needed to make the given profit."""
         buy_maker_fee = exchanges.fees(exchange_to_buy_on)[0]
         sell_taker_fee = exchanges.fees(exchange_to_sell_on)[1]
 

@@ -50,9 +50,14 @@ class ExchangeSlice:
         """
         if not self._order_book:
             if self.always_fetch_order_book:
-                raise Exception("The order book should have been pre-fetched.")
+                raise Exception("The order book for {} should have been "
+                                "pre-fetched.".format(self.exchange))
             self._order_book = self.fetcher.get_order_book()
         return self._order_book
+
+    @order_book.setter
+    def set_order_book(self, in_order_book):
+        self._order_book = in_order_book
 
     def order(self, order_id):
         """
@@ -92,6 +97,9 @@ class ExchangeSlice:
             self._balance = self.fetcher.get_balance()
         return self._balance
 
+    @balance.setter
+    def set_balance(self, balance):
+        self._balance = balance
 
 class Algorithm:
     """Subclass Algorithm and pass it to Trader to make trades.
@@ -283,10 +291,10 @@ class Trader:
     """
     def __init__(self, algorithm, exchanges_to_use):
         self._algorithm = algorithm
-        self._slices = []
-        self.actions = []
         self._fetchers = {}
         self.exchanges = exchanges_to_use
+        self.last_actions = []
+        self.next_slice = None
 
     def set_fetcher(self, fetcher, supported_exchanges):
         for id in supported_exchanges:
@@ -302,19 +310,12 @@ class Trader:
         When testing, this method doesn't need to be called, and the data
         can be set directly.
         """
-        next_slice = Slice()
+        self.next_slice = Slice()
         for id in self.exchanges:
             fetcher = self._fetchers[id]
-            exchange_slice = ExchangeSlice(fetcher)
-            next_slice.set_slice(id, exchange_slice)
-        self._slices.append(next_slice)
-
-    def add_slice(self, slice):
-        self._slices.append(slice)
+            exchange_slice = ExchangeSlice(id, fetcher)
+            self.next_slice.set_slice(id, exchange_slice)
 
     def step(self):
-        self._algorithm.on_data(self._slices[-1])
-
-    def step_algorithm(self):
-        actions = self._algorithm.on_data()
-        self.actions.append(actions)
+        self.last_actions = self._algorithm.on_data(self.next_slice)
+        return self.last_actions
