@@ -89,6 +89,9 @@ class ExchangeSlice:
             self._orders[order_id] = self.fetcher.get_order(self.exchange, order_id)
         return self._orders[order_id]
 
+    def set_order(self, order_id, order_info):
+        self._orders[order_id] = order_info
+
     @property
     def balance(self):
         if not self._balance:
@@ -318,5 +321,4 @@ class Trader:
 
     def step(self):
         self.last_actions = self._algorithm.on_data(self.next_slice)
-        print(self.last_actions)
         return self.last_actions

@@ -2,6 +2,7 @@ import kohuhu.trader as trader
 from kohuhu.trader import OrderAction
 import kohuhu.exchanges as exchanges
 from decimal import Decimal
+import logging
 
 
 class OneWayPairArbitrage(trader.Algorithm):
@@ -48,25 +49,35 @@ class OneWayPairArbitrage(trader.Algorithm):
             # TODO check to see if the order has been met.
             if self.live_limit_order.order_id is not None:
                 # The order has been placed.
-                order = slice.order(self.live_limit_order.order_id)
+                order = slice.for_exchange(self.exchange_buy_on)\
+                    .order(self.live_limit_order.order_id)
                 if order['amount'] == 0:
                     raise Exception("Ops, we made an order for 0 BTC. Something"
                                     " isn't right.")
                 if order['remaining'] == 0:
+                    logging.info("Order action has been placed, and is "
+                                 "completed. About to create a sell order on"
+                                 "the second exchange.")
                     # Our order has completed! So lets execute a market sell.
                     # The market may have moved since we placed our limit order.
                     # TODO: should be buy anyway?
                     marketBidAction = OrderAction(self.exchange_sell_on,
-                                                  OrderAction.Side.BID,
+                                                  OrderAction.Side.ASK,
                                                   OrderAction.Type.Market,
                                                   amount=self.bid_amount_in_btc)
                     # I'm not sure if we need this again. Maybe good to check
                     # that the order succeeded.
                     self.market_order = marketBidAction
                     self.live_limit_order = None
-                    return [marketBidAction,]
+                    return [marketBidAction]
+                else:
+                    logging.info("Order action has been placed, but it's not "
+                                 "completed yet.")
+                    return []
+
             else:
                 # The order hasn't been placed yet. Nothing to do.
+                logging.info("Waiting for order action to be placed.")
                 return []
 
     @staticmethod
