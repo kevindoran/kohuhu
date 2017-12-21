@@ -79,17 +79,20 @@ def btc_market_spread(exchange_id):
 
 def fees(exchange_id):
     # Getting the maker taker fees is exchange dependent.
+    # TODO: need to get a clean way of dealing with sandbox names.
+    if exchange_id.endswith("_sandbox"):
+        exchange_id = exchange_id[:-len("_sandbox")]
     if exchange_id == 'gdax':
         gdax = exchange(exchange_id)
         fees = gdax.fees['trading']
-        maker_fee = fees['maker']
-        taker_fee = fees['taker']
+        maker_fee = Decimal(fees['maker'])
+        taker_fee = Decimal(fees['taker'])
     elif exchange_id == 'gemini':
         # Some hard-coding, as Gemini doesn't have their fees exposed in their
         # API (thus, isn't in ccxt). Their fees are dynamic. But unless we start
         # trading very large amounts, the fees are (as of 2017-12-17):
-        maker_fee = 0.0025
-        taker_fee = 0.0025
+        maker_fee = Decimal(0.0025)
+        taker_fee = Decimal(0.0025)
     else:
         raise Exception("The fees for the exchange: {} are unknown.".format(
             exchange_id))
