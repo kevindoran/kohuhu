@@ -1,32 +1,31 @@
 from enum import Enum, auto
 
+
 class ExchangeSlice:
     """Data from a single at a point in time.
 
     Note: I'm not sure what data is needed and how granular it should be given.
     I just guessed at some simple methods to begin with.
     """
-    def __init__(self, fetcher):
+    def __init__(self, exchange_id ,fetcher):
         # Lets assume that the order book, personal orders and balance use the
         # ccxt structure.
+        self.exchange = exchange_id
         self._order_book = None
-        self._personal_orders = None
+        self._orders = {}
         self._balance = None
         self.fetcher = fetcher
         self.always_fetch_order_book = True
-        self.always_fetch_personal_orders = True
         self.always_fetch_balance = False
 
     def populate(self):
         self._order_book = None
-        self._personal_orders = None
+        self._orders = {}
         self._balance = None
         if self.always_fetch_order_book:
-            self._order_book = self.fetcher.get_order_book()
-        if self.always_fetch_personal_orders:
-            self._order_book = self.fetcher.get_personal_orders()
+            self._order_book = self.fetcher.get_order_book(self.exchange)
         if self.always_fetch_balance:
-            self._order_book = self.fetcher.get_balance()
+            self._order_book = self.fetcher.get_balance(self.exchange)
 
     @property
     def order_book(self):
@@ -55,13 +54,35 @@ class ExchangeSlice:
             self._order_book = self.fetcher.get_order_book()
         return self._order_book
 
-    @property
-    def personal_orders(self):
-        if not self.personal_orders:
-            if self.always_fetch_personal_orders:
-                raise Exception("Personal orders should have been pre-fetched.")
-            self._personal_orders = self.fetcher.get_personal_orders()
-        return self._personal_orders
+    def order(self, order_id):
+        """
+        A specific order on the exchange.
+
+        Assuming we go with the ccxt data structure. The return type is a dict,
+        and it looks like:
+        {
+           'id':        '12345-67890:09876/54321', // string
+           'datetime':  '2017-08-17 12:42:48.000', // ISO8601 datetime with ms
+           'timestamp':  1502962946216, // Unix timestamp in milliseconds
+           'status':    'open',         // 'open', 'closed', 'canceled'
+           'symbol':    'ETH/BTC',      // symbol
+           'type':      'limit',        // 'market', 'limit'
+           'side':      'buy',          // 'buy', 'sell'
+           'price':      0.06917684,    // float price in quote currency
+           'amount':     1.5,           // ordered amount of base currency
+           'filled':     1.0,           // filled amount of base currency
+           'remaining':  0.5,           // remaining amount to fill
+           'trades':   [ ... ],         // a list of order trades/executions
+           'fee':      {                // fee info, if available
+               'currency': 'BTC',       // which currency the fee is (usually quote)
+               'cost': 0.0009,          // the fee amount in that currency
+           },
+           'info':     { ... },         // original unparsed order structure
+        }
+        """
+        if not order_id in self._orders:
+            self._orders[order_id] = self.fetcher.get_order(self.exchange, order_id)
+        return self._orders[order_id]
 
     @property
     def balance(self):
@@ -70,6 +91,7 @@ class ExchangeSlice:
                 raise Exception("Balance should have been pre-fetched.")
             self._balance = self.fetcher.get_balance()
         return self._balance
+
 
 class Algorithm:
     """Subclass Algorithm and pass it to Trader to make trades.
@@ -107,7 +129,20 @@ class Action:
 
 
 class OrderAction(Action):
-    """Represents the action of creating an order."""
+    """Represents the action of creating an order.
+
+    Attributes:
+        amount (Decimal): amount of BTC to buy/sell.
+        price  (Decimal): price in exchange currency per BTC. Non for market
+            orders. Note: we could have separate class for market and limit
+            orders so that this field doesn't have to be none for market orders.
+        side (OrderAction.Side): whether the order is a buy or sell order.
+        type (OrderAction.Type): whether the order is a market or limit order.
+        order_id (int): the order_id of the created order. This gets filled
+            when the order is executed by an executor. An algorithm should hold
+            onto any order actions they return if they wish to access the
+            order_id that is created.
+    """
 
     class Side(Enum):
         ASK = auto()
@@ -117,12 +152,14 @@ class OrderAction(Action):
         Market = auto()
         Limit = auto()
 
-    def __init__(self, side, type, amount, price):
+    def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__()
+        self.exchange = exchange_id
         self.amount = amount
         self.price = price
         self.side = side
         self.type = type
+        self.order_id = None
 
     @Action.name.getter
     def name(self):
@@ -133,8 +170,8 @@ class OrderAction(Action):
         return "{} {} order".format(type_name, side_name)
 
     def __repr__(self):
-        return "{} for {} BTC at {} $/BTC".format(self.name, self.amount,
-                                                  self.type)
+        return "{} for {} BTC at {} $/BTC on {}".format(self.name, self.amount,
+            self.price if self.price else "market rate", self.exchange)
 
 class CancelOrder(Action):
     """Represents the action of cancelling an order."""
@@ -149,6 +186,7 @@ class CancelOrder(Action):
 
     def __repr__(self):
         return "{} for order ID: {}".format(self.name, self.order_id)
+
 
 class Executor:
     """Executes actions for one or multiple exchange."""
@@ -190,7 +228,12 @@ class Fetcher:
         self._check_support(exchange)
         raise Exception("Not implemented yet.")
 
-    def get_personal_orders(self, exchange):
+    # I'm not sure this is needed:
+    #def get_personal_orders(self, exchange):
+    #    self._check_support(exchange)
+    #    raise Exception("Not implemented yet.")
+
+    def get_order(self, exchange, id):
         self._check_support(exchange)
         raise Exception("Not implemented yet.")
 
@@ -201,6 +244,7 @@ class Fetcher:
             exchange (ccxt.Exchange): the exchange to fetch the data for.
         """
         self._check_support(exchange)
+        raise NotImplementedError("TODO")
 
     def _check_support(self, exchange_id):
         if exchange_id not in self.supported_exchanges:

@@ -3,14 +3,17 @@ from kohuhu.trader import OrderAction
 import kohuhu.exchanges as exchanges
 from decimal import Decimal
 
-class OneWayPairArbitrage(trader.Algorithm):
 
+class OneWayPairArbitrage(trader.Algorithm):
+    """Carries out buy->sell arbitrage in one direction between two exchanges.
+    """
 
     def __init__(self):
         super().__init__()
         self.exchange_buy_on = None
         self.exchange_sell_on = None
-        self.live_limit_orders = True
+        self.live_limit_order = None
+        self.market_order = None
         self.max_bid_amount_in_btc = Decimal(0.5)
         self.bid_amount_in_btc = Decimal(0.5)
         self.profit_target = 0.05 # percent.
@@ -22,38 +25,67 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.exchange_buy_on = exchanges_to_use[0]
         self.exchange_sell_on = exchanges_to_use[0]
 
-    # Note: should the slice contain balance info? Or maybe we could include
-    # the fetchers as part of the input. We need some sort of on demand data,
-    # I think.
     def on_data(self, slice):
-        if not self.live_limit_orders:
-            # Caculate the limit order price.
+        if not self.live_limit_order:
+            # Calculate the BTC market price on the exchange to sell on.
             order_book = slice.for_exchange(self.exchange_sell_on).order_book
-            available_bid_amount = Decimal(0)
-            bid_index = Decimal(0)
-            effective_market_price = Decimal(0)
-            filled = Decimal(0)
-            remaining = self.bid_amount_in_btc
-            while available_bid_amount < self.bid_amount_in_btc:
-                next_highest_bid = order_book['bids'][bid_index]
-                price = Decimal(next_highest_bid[0])
-                amount = max(Decimal(next_highest_bid[1]), remaining)
-                fraction_of_trade = amount / self.bid_amount_in_btc
-                effective_market_price += fraction_of_trade * price
-
+            sell_price = self.calculate_effective_sell_price(
+                self.bid_amount_in_btc, order_book)
+            # Calculate the bid price to make a certain profit.
             bid_price = self.calculate_bid_limit_price(self.exchange_buy_on,
                                                        self.exchange_sell_on,
-                                                       effective_market_price,
+                                                       sell_price,
                                                        self.profit_target)
-            bid_action = OrderAction(OrderAction.Side.BID,
+            # Create and return the action.
+            bid_action = OrderAction(self.exchange_buy_on,
+                                     OrderAction.Side.BID,
                                      OrderAction.Type.Limit,
                                      amount=self.bid_amount_in_btc,
                                      price=bid_price)
-            self.live_limit_orders = True
+            self.live_limit_order = bid_action
             return bid_action
         else:
             # TODO check to see if the order has been met.
+            if self.live_limit_order.order_id is not None:
+                # The order has been placed.
+                order = slice.order(self.live_limit_order.order_id)
+                if order['amount'] == 0:
+                    raise Exception("Ops, we made an order for 0 BTC. Something"
+                                    " isn't right.")
+                if order['remaining'] == 0:
+                    # Our order has completed! So lets execute a market sell.
+                    # The market may have moved since we placed our limit order.
+                    # TODO: should be buy anyway?
+                    marketBidAction = OrderAction(self.exchange_sell_on,
+                                                  OrderAction.Side.BID,
+                                                  OrderAction.Type.Market,
+                                                  amount=self.bid_amount_in_btc)
+                    # I'm not sure if we need this again. Maybe good to check
+                    # that the order succeeded.
+                    self.market_order = marketBidAction
+                    self.live_limit_order = None
+                    return marketBidAction
+            else:
+                # The order hasn't been placed yet. Nothing to do.
+                return None
 
+
+    @staticmethod
+    def calculate_effective_sell_price(sell_amount, order_book):
+        capacity_counted = Decimal(0)
+        bid_index = Decimal(0)
+        effective_market_price = Decimal(0)
+        filled = Decimal(0)
+        remaining = sell_amount
+        while capacity_counted < sell_amount:
+            next_highest_bid = order_book['bids'][bid_index]
+            price = Decimal(next_highest_bid[0])
+            bid_amount = Decimal(next_highest_bid[1])
+            amount_used = max(bid_amount, remaining)
+            fraction_of_trade = amount_used / sell_amount
+            effective_market_price += fraction_of_trade * price
+            capacity_counted += bid_amount
+        return effective_market_price
 
     @staticmethod
     def calculate_bid_limit_price(cls, exchange_to_buy_on, exchange_to_sell_on,
