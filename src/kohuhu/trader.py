@@ -115,7 +115,6 @@ class Algorithm:
     """
     def __init__(self):
         self.exchanges = []
-        pass
 
     def initialize(self, exchanges_to_use):
         self.exchanges = exchanges_to_use
@@ -139,7 +138,7 @@ class Action:
         raise NotImplementedError("Subclasses should implement this method.")
 
 
-class OrderAction(Action):
+class CreateOrder(Action):
     """Represents the action of creating an order.
 
     Attributes:
@@ -147,8 +146,8 @@ class OrderAction(Action):
         price  (Decimal): price in exchange currency per BTC. Non for market
             orders. Note: we could have separate class for market and limit
             orders so that this field doesn't have to be none for market orders.
-        side (OrderAction.Side): whether the order is a buy or sell order.
-        type (OrderAction.Type): whether the order is a market or limit order.
+        side (CreateOrder.Side): whether the order is a buy or sell order.
+        type (CreateOrder.Type): whether the order is a market or limit order.
         order_id (int): the order_id of the created order. This gets filled
             when the order is executed by an executor. An algorithm should hold
             onto any order actions they return if they wish to access the
@@ -160,8 +159,8 @@ class OrderAction(Action):
         BID = auto()
 
     class Type(Enum):
-        Market = auto()
-        Limit = auto()
+        MARKET = auto()
+        LIMIT = auto()
 
     def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__()

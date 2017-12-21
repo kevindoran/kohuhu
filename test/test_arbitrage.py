@@ -6,6 +6,8 @@ import kohuhu.trader
 def test_one_way_pair_abitrage():
     algorithm = arbitrage.OneWayPairArbitrage()
 
+    # It doesn't actually used these exchanges. The exchanges just have to be
+    # something for which we have fee data.
     buy_on_exchange = 'gdax_sandbox'
     sell_on_exchange = 'gemini_sandbox'
     trader = kohuhu.trader.Trader(algorithm, [buy_on_exchange, sell_on_exchange])
@@ -34,8 +36,8 @@ def test_one_way_pair_abitrage():
     actions = trader.step()
     assert len(actions) == 1
     buy_order_action = actions[0]
-    assert buy_order_action.type == kohuhu.trader.OrderAction.Type.Limit
-    assert buy_order_action.side == kohuhu.trader.OrderAction.Side.BID
+    assert buy_order_action.type == kohuhu.trader.CreateOrder.Type.LIMIT
+    assert buy_order_action.side == kohuhu.trader.CreateOrder.Side.BID
     assert buy_order_action.exchange == buy_on_exchange
 
     actions = trader.step()
@@ -62,8 +64,8 @@ def test_one_way_pair_abitrage():
     fake_data_for_exchange_1.set_order(order_id, order_info)
     actions = trader.step()
     assert len(actions) == 1
-    assert actions[0].type == kohuhu.trader.OrderAction.Type.Market
-    assert actions[0].side == kohuhu.trader.OrderAction.Side.ASK
+    assert actions[0].type == kohuhu.trader.CreateOrder.Type.MARKET
+    assert actions[0].side == kohuhu.trader.CreateOrder.Side.ASK
     assert actions[0].exchange == sell_on_exchange
     assert actions[0].amount == algorithm.bid_amount_in_btc
 

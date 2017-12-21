@@ -1,5 +1,5 @@
 import kohuhu.trader as trader
-from kohuhu.trader import OrderAction
+from kohuhu.trader import CreateOrder
 import kohuhu.exchanges as exchanges
 from decimal import Decimal
 import logging
@@ -38,9 +38,9 @@ class OneWayPairArbitrage(trader.Algorithm):
                                                        sell_price,
                                                        self.profit_target)
             # Create and return the action.
-            bid_action = OrderAction(self.exchange_buy_on,
-                                     OrderAction.Side.BID,
-                                     OrderAction.Type.Limit,
+            bid_action = CreateOrder(self.exchange_buy_on,
+                                     CreateOrder.Side.BID,
+                                     CreateOrder.Type.LIMIT,
                                      amount=self.bid_amount_in_btc,
                                      price=bid_price)
             self.live_limit_order = bid_action
@@ -61,9 +61,9 @@ class OneWayPairArbitrage(trader.Algorithm):
                     # Our order has completed! So lets execute a market sell.
                     # The market may have moved since we placed our limit order.
                     # TODO: should be buy anyway?
-                    marketBidAction = OrderAction(self.exchange_sell_on,
-                                                  OrderAction.Side.ASK,
-                                                  OrderAction.Type.Market,
+                    marketBidAction = CreateOrder(self.exchange_sell_on,
+                                                  CreateOrder.Side.ASK,
+                                                  CreateOrder.Type.MARKET,
                                                   amount=self.bid_amount_in_btc)
                     # I'm not sure if we need this again. Maybe good to check
                     # that the order succeeded.
@@ -86,17 +86,20 @@ class OneWayPairArbitrage(trader.Algorithm):
         capacity_counted = Decimal(0)
         bid_index = 0
         effective_market_price = Decimal(0)
-        filled = Decimal(0)
         remaining = sell_amount
         while capacity_counted < sell_amount:
             next_highest_bid = order_book['bids'][bid_index]
             price = Decimal(next_highest_bid[0])
             bid_amount = Decimal(next_highest_bid[1])
-            amount_used = max(bid_amount, remaining)
+            amount_used = min(bid_amount, remaining)
             fraction_of_trade = amount_used / sell_amount
             effective_market_price += fraction_of_trade * price
             capacity_counted += bid_amount
             bid_index += 1
+            if bid_index >= len(order_book['bids']):
+                raise IndexError("bid_index {} greater than the number of "
+                                 "orders in the order book ({})."
+                                 .format(bid_index, len(order_book['bids'])))
         return effective_market_price
 
     @staticmethod
