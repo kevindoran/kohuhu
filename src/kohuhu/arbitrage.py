@@ -54,6 +54,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                 if order['amount'] == 0:
                     raise Exception("Ops, we made an order for 0 BTC. Something"
                                     " isn't right.")
+                # FIXME: need to act on partially filled orders too.
                 if order['remaining'] == 0:
                     logging.info("Order action has been placed, and is "
                                  "completed. About to create a sell order on"
@@ -89,6 +90,8 @@ class OneWayPairArbitrage(trader.Algorithm):
         remaining = sell_amount
         while capacity_counted < sell_amount:
             next_highest_bid = order_book['bids'][bid_index]
+            # TODO: can we get a clean way to separate the amount and price
+            # information better?
             price = Decimal(next_highest_bid[0])
             bid_amount = Decimal(next_highest_bid[1])
             amount_used = min(bid_amount, remaining)
@@ -97,9 +100,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             capacity_counted += bid_amount
             bid_index += 1
             if bid_index >= len(order_book['bids']):
-                raise IndexError("bid_index {} greater than the number of "
-                                 "orders in the order book ({})."
-                                 .format(bid_index, len(order_book['bids'])))
+                break
         return effective_market_price
 
     @staticmethod
