@@ -88,7 +88,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         # Create a bid limit action if there is none.
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.
-            self._live_limit_action = self.create_bid_limit_order(order_book)
+            self._live_limit_action = self._create_bid_limit_order(order_book)
             self._last_limit_order_update_at = time_now
             actions.append(self._live_limit_action)
             return actions
@@ -110,12 +110,12 @@ class OneWayPairArbitrage(trader.Algorithm):
         # exchange by the fill amount.
         order = data_slice.for_exchange(self.exchange_buy_on).order(
             self._live_limit_action.order_id)
-        self.sanity_check_order(order)
+        self._sanity_check_order(order)
         fill_amount = Decimal(order['filled'])
         # If our bid order has been filled more, create an ask order on the
         # other exchange.
         if fill_amount > self._previous_fill_amount:
-                ask_action = self.create_market_ask_order(fill_amount)
+                ask_action = self._create_market_ask_order(fill_amount)
                 actions.append(ask_action)
                 return actions
         else:
@@ -127,11 +127,11 @@ class OneWayPairArbitrage(trader.Algorithm):
             if not self._live_limit_action:
                 raise Exception("Logic error: the algorithm should not have "
                                 "reached this point.")
-            new_best_price = self.calculate_effective_sell_price(
+            new_best_price = self._calculate_effective_sell_price(
                 self.bid_amount_in_btc, order_book)
             original_price = Decimal(order['price'])
-            if self.should_cancel_order(original_price, new_best_price,
-                    self.order_update_threshold):
+            if self._should_cancel_order(original_price, new_best_price,
+                                         self.order_update_threshold):
                 actions.append(CancelOrder(self.exchange_buy_on,
                                            self._live_limit_action.order_id))
                 # Note: do we want the order_update_period to represent time
@@ -140,7 +140,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                 self._live_limit_action = None
         return actions
 
-    def create_market_ask_order(self, latest_fill_amount):
+    def _create_market_ask_order(self, latest_fill_amount):
         """Create a market ask order.
 
         After the bid limit order has been filled more, call this method to
@@ -180,7 +180,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             # limit order, as it is finished.
         return market_ask_action
 
-    def create_bid_limit_order(self, order_book_of_sell_exchange):
+    def _create_bid_limit_order(self, order_book_of_sell_exchange):
         """Create the appropriate bid limit order action.
 
         Args:
@@ -191,20 +191,20 @@ class OneWayPairArbitrage(trader.Algorithm):
         Returns:
             (CreateOrder): the bid limit order that was created.
         """
-        sell_price = self.calculate_effective_sell_price(
+        sell_price = self._calculate_effective_sell_price(
             self.bid_amount_in_btc, order_book_of_sell_exchange)
         # Calculate the bid price to make the required profit.
-        bid_price = self.calculate_bid_limit_price(self.exchange_buy_on,
-                                                   self.exchange_sell_on,
-                                                   sell_price,
-                                                   self.profit_target)
+        bid_price = self._calculate_bid_limit_price(self.exchange_buy_on,
+                                                    self.exchange_sell_on,
+                                                    sell_price,
+                                                    self.profit_target)
         # Create and return the action.
         bid_action = CreateOrder(self.exchange_buy_on, CreateOrder.Side.BID,
                                  CreateOrder.Type.LIMIT,
                                  amount=self.bid_amount_in_btc, price=bid_price)
         return bid_action
 
-    def sanity_check_order(self, order):
+    def _sanity_check_order(self, order):
         if order['amount'] == 0:
             raise Exception("Ops, we made an order for 0 BTC on {}. Something "
                             "isn't right." .format(self.exchange_buy_on))
@@ -217,7 +217,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                     self.bid_amount_in_btc, self.exchange_buy_on))
 
     @staticmethod
-    def should_cancel_order(original_price, new_best_price, threshold):
+    def _should_cancel_order(original_price, new_best_price, threshold):
         """Determines if a bid limit order should be cancelled.
 
         Determines if a bid limit order at original_price should be cancelled
@@ -239,7 +239,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         return  should_cancel
 
     @staticmethod
-    def calculate_effective_sell_price(sell_amount, order_book):
+    def _calculate_effective_sell_price(sell_amount, order_book):
         """Calculates the effective price on a market for the given amount.
 
         If you make a market ask order for more BTC than the top market bid, the
@@ -278,8 +278,8 @@ class OneWayPairArbitrage(trader.Algorithm):
         return effective_market_price
 
     @staticmethod
-    def calculate_bid_limit_price(exchange_to_buy_on, exchange_to_sell_on,
-                                  market_price_to_sell, profit_target):
+    def _calculate_bid_limit_price(exchange_to_buy_on, exchange_to_sell_on,
+                                   market_price_to_sell, profit_target):
         """Calculates the bid price needed to make the given profit.
 
         Args:
