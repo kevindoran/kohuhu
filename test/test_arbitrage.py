@@ -3,13 +3,12 @@ import kohuhu.arbitrage as arbitrage
 import kohuhu.trader
 
 
-def test_one_way_pair_abitrage():
-    algorithm = arbitrage.OneWayPairArbitrage()
-
+def test_one_way_pair_arbitrage():
     # It doesn't actually used these exchanges. The exchanges just have to be
     # something for which we have fee data.
     buy_on_exchange = 'gdax_sandbox'
     sell_on_exchange = 'gemini_sandbox'
+    algorithm = arbitrage.OneWayPairArbitrage(buy_on_exchange, sell_on_exchange)
     trader = kohuhu.trader.Trader(algorithm, [buy_on_exchange, sell_on_exchange])
     trader.initialize()
 
@@ -40,6 +39,7 @@ def test_one_way_pair_abitrage():
     assert buy_order_action.side == kohuhu.trader.CreateOrder.Side.BID
     assert buy_order_action.exchange == buy_on_exchange
 
+    fake_slice.timestamp = fake_slice.timestamp + algorithm.poll_period
     actions = trader.step()
     assert len(actions) == 0
 
@@ -54,6 +54,7 @@ def test_one_way_pair_abitrage():
         'remaining': algorithm.bid_amount_in_btc
     }
     fake_data_for_exchange_1.set_order(order_id, order_info)
+    fake_slice.timestamp = fake_slice.timestamp + algorithm.poll_period
     actions = trader.step()
     assert len(actions) == 0
 
@@ -62,6 +63,7 @@ def test_one_way_pair_abitrage():
     order_info['filled'] = algorithm.bid_amount_in_btc
     order_info['remaining'] = 0
     fake_data_for_exchange_1.set_order(order_id, order_info)
+    fake_slice.timestamp = fake_slice.timestamp + algorithm.poll_period
     actions = trader.step()
     assert len(actions) == 1
     assert actions[0].type == kohuhu.trader.CreateOrder.Type.MARKET
