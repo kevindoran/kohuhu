@@ -1,6 +1,7 @@
 from enum import Enum, auto
 from datetime import datetime
 
+
 class ExchangeSlice:
     """Data from a single at a point in time.
 
@@ -266,7 +267,8 @@ class Slice:
     """Combines exchange slices.
 
     Attributes:
-        created_at (datetime.Datetime): the time the slice was created.
+        timestamp (datetime.Datetime): the time the slice was created. This is
+            used by Algorithms instead of datetime.datetime.now().
     """
 
     def __init__(self):
