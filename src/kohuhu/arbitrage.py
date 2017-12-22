@@ -146,6 +146,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                             actions.append(
                                 CancelOrder(self.exchange_buy_on,
                                             self.live_limit_order.order_id))
+                            self.live_limit_order = None
             else:
                 # The order hasn't been placed yet. Nothing to do.
                 logging.info("Waiting for order action to be placed.")
