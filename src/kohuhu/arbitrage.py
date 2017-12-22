@@ -52,6 +52,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.order_update_threshold = Decimal(0.1) # percent
         self.profit_target = Decimal(0.05)  # percent.
         self._last_run_at = datetime.datetime.min
+        self._last_limit_order_update_at = None
         self._live_limit_action = None
         self._previous_fill_amount = Decimal(0)
         self._market_orders_made = []
@@ -66,127 +67,127 @@ class OneWayPairArbitrage(trader.Algorithm):
                         ",".join((e for e in exchanges_to_use))))
 
     def on_data(self, data_slice):
+        # Any actions will be collected here. They are returned at the end.
         actions = []
-        should_poll = \
-            (datetime.datetime.now() - self._last_run_at) >= self.poll_period
+        time_now = data_slice.timestamp
+        # If poll_period hasn't elapsed since the last run, return.
+        should_poll = (time_now - self._last_run_at) >= self.poll_period
         if not should_poll:
             return actions
-
-        # The polling is controlled by the data slice.
         self._last_run_at = data_slice.timestamp
 
+        # Allow limit order update if  limit_order_update_period has elapsed
+        # since last update or creation.
         should_update_limit_order = \
-            (datetime.datetime.now() - data_slice.timestamp) >= \
-            self.limit_order_update_period
+            self._last_limit_order_update_at is not None and \
+            (time_now - self._last_limit_order_update_at) >= \
+                self.limit_order_update_period
 
         order_book = data_slice.for_exchange(self.exchange_sell_on).order_book
+
+        # Create a bid limit action if there is none.
         if not self._live_limit_action:
-            # No buy limit action has been created yet. Make one.
             # Calculate the BTC market price on the exchange to sell on.
-            sell_price = self.calculate_effective_sell_price(
-                self.bid_amount_in_btc, order_book)
-            # Calculate the bid price to make a certain profit.
-            bid_price = self.calculate_bid_limit_price(self.exchange_buy_on,
-                                                       self.exchange_sell_on,
-                                                       sell_price,
-                                                       self.profit_target)
-            # Create and return the action.
-            bid_action = CreateOrder(self.exchange_buy_on,
-                                     CreateOrder.Side.BID,
-                                     CreateOrder.Type.LIMIT,
-                                     amount=self.bid_amount_in_btc,
-                                     price=bid_price)
-            self._live_limit_action = bid_action
-            actions.append(bid_action)
+            self._live_limit_action = self.create_bid_limit_order(order_book)
+            self._last_limit_order_update_at = time_now
+            actions.append(self._live_limit_action)
             return actions
+
+        # There is a bid limit action.
+        # If the order hasn't been placed yet, do nothing.
+        if self._live_limit_action.order_id is None:
+            # The order hasn't been placed yet. Nothing to do.
+            logging.info("Waiting for order action to be placed.")
+            if should_update_limit_order:
+                logging.warning("The limit order hasn't been placed yet, "
+                                "but the order update period has been "
+                                "reached. There may be a bug, or the limit "
+                                "order update period might be too short.")
+            return actions
+
+        # The action has been executed and the order has been placed. Every time
+        # the order gets more filled, make a market sell order on the other
+        # exchange by the fill amount.
+        order = data_slice.for_exchange(self.exchange_buy_on).order(
+            self._live_limit_action.order_id)
+        if order['amount'] == 0:
+            raise Exception("Ops, we made an order for 0 BTC on {}. Something "
+                            "isn't right." .format(self.exchange_buy_on))
+        fill_amount = Decimal(order['filled'])
+        if fill_amount > self.bid_amount_in_btc:
+            raise Exception(
+                "Something isn't right. Our order {} got filled ({}) more than "
+                "the amount we placed ({}) on {}.".format(
+                    self._live_limit_action.order_id, order['filled'],
+                    self.bid_amount_in_btc, self.exchange_buy_on))
+
+
+        # If our bid order has been filled more, create an ask order on the
+        # other exchange.
+        if fill_amount > self._previous_fill_amount:
+            fill_diff = fill_amount - self._previous_fill_amount
+            # TODO: What is the minimum amount of bitcoin we should be buying,
+            # or does it not matter?
+            logging.info("The limit buy order ({}) has been filled more (prev "
+                         "fill: {}, current: {}). About to place a market sell "
+                         "order for {} on {}.".format(
+                self._live_limit_action.order_id, self._previous_fill_amount,
+                fill_amount, fill_diff, self.exchange_sell_on))
+            market_bid_action = CreateOrder(self.exchange_sell_on,
+                CreateOrder.Side.ASK, CreateOrder.Type.MARKET, amount=fill_diff)
+            actions.append(market_bid_action)
+            # Store the order action, although I'm not sure if we will need them
+            # again. Maybe for logging.
+            self._market_orders_made.append(market_bid_action)
+            self._previous_fill_amount = fill_amount
+            # TODO: Do we need rounding here?
+            if fill_amount == self.bid_amount_in_btc:
+                logging.info("Our buy limit order ({}) on {} has been fully "
+                             "filled.".format(
+                    self._live_limit_action.order_id, self.exchange_buy_on))
+                # TODO: might want to double check that the order is finished.
+                self._live_limit_action = None
+                # We can return here, as we know we don't need to update the
+                # limit order, as it is finished.
+                return actions
         else:
-            # We have already created a buy limit order action.
-            if self._live_limit_action.order_id is not None:
-                # The action has been executed and the order has been placed.
-                # Every time the order gets more filled, make a market sell
-                # order on the other exchange by the fill amount.
-                order = data_slice.for_exchange(self.exchange_buy_on) \
-                    .order(self._live_limit_action.order_id)
-                if order['amount'] == 0:
-                    raise Exception("Ops, we made an order for 0 BTC on {}. "
-                                    "Something isn't right."
-                                    .format(self.exchange_buy_on))
-                fill_amount = Decimal(order['filled'])
-                # TODO: Do we need rounding here? What is the minimum amount
-                # of bitcoin we should be buying?
-                remaining = self.bid_amount_in_btc - fill_amount
-                if fill_amount > self.bid_amount_in_btc:
-                    raise Exception(
-                        "Something isn't right. Our order {} got filled ({}) "
-                        "more than the amount we placed ({}) on {}."
-                            .format(self._live_limit_action.order_id,
-                                    order['filled'],
-                                    self.bid_amount_in_btc,
-                                    self.exchange_buy_on))
+            logging.info("The limit buy order has not been filled any further.")
 
-                if fill_amount > self._previous_fill_amount:
-                    # Our buy order has been filled more, lets create a sell
-                    # order on the other exchange.
-                    fill_diff = fill_amount - self._previous_fill_amount
-                    logging.info(
-                        "The limit buy order ({}) has been filled more (prev "
-                        "fill: {}, current: {}). About to place a market sell "
-                        "order for {} on {}.".format(
-                            self._live_limit_action.order_id,
-                            self._previous_fill_amount, fill_amount, fill_diff,
-                            self.exchange_sell_on))
-                    market_bid_action = CreateOrder(self.exchange_sell_on,
-                                                    CreateOrder.Side.ASK,
-                                                    CreateOrder.Type.MARKET,
-                                                    amount=fill_diff)
-
-                    # Store the order action, although I'm not sure if we
-                    # will need them again. Maybe for logging.
-                    self._market_orders_made.append(market_bid_action)
-                    self._previous_fill_amount = fill_amount
-
-                    if fill_amount == self.bid_amount_in_btc:
-                        logging.info("Our buy limit order ({}) on {} has been "
-                                     "fully filled."
-                                     .format(self._live_limit_action.order_id,
-                                             self.exchange_buy_on))
-                        self._live_limit_action = None
-                    actions.append(market_bid_action)
-                else:
-                    logging.info("The limit buy order has not been filled any "
-                                 "further.")
-
-                if should_update_limit_order:
-                    # We have created a limit order previously, but it is time
-                    # to check if it needs updating.
-                    if not self._live_limit_action:
-                        logging.info("The order ({}) on {} was fully filled on "
-                                     "the same update tick that the order was "
-                                     "due to be updated. No further action "
-                                     "taken.")
-                    else:
-                        # TODO: do we want to make the new order smaller?
-                        remaining = self.bid_amount_in_btc - \
-                                    self._previous_fill_amount
-                        new_best_price = self.calculate_effective_sell_price(
-                            remaining, order_book)
-                        original_price = Decimal(order['price'])
-                        if self.should_cancel_order(
-                                original_price, new_best_price,
-                                self.order_update_threshold):
-                            actions.append(
-                                CancelOrder(self.exchange_buy_on,
-                                            self._live_limit_action.order_id))
-                            self._live_limit_action = None
-            else:
-                # The order hasn't been placed yet. Nothing to do.
-                logging.info("Waiting for order action to be placed.")
-                if should_update_limit_order:
-                    logging.warning("The limit order hasn't been placed yet, "
-                                    "but the order update period has been "
-                                    "reached. There may be a bug, or the limit "
-                                    "order update period might be too short.")
+        if should_update_limit_order:
+            # We have created a limit order previously, but it is time to check
+            # if it needs updating.
+            if not self._live_limit_action:
+                raise Exception("Logic error: the algorithm should not have "
+                                "reached this point.")
+            new_best_price = self.calculate_effective_sell_price(
+                self.bid_amount_in_btc, order_book)
+            original_price = Decimal(order['price'])
+            if self.should_cancel_order(original_price, new_best_price,
+                    self.order_update_threshold):
+                actions.append(CancelOrder(self.exchange_buy_on,
+                                           self._live_limit_action.order_id))
+                # Note: do we want the order_update_period to represent time
+                # between actual updates, or just checks (more frequent)?
+                self._last_limit_order_update_at = time_now
+                self._live_limit_action = None
         return actions
+
+    def create_bid_limit_order(self, order_book_of_sell_exchange):
+        """Create the appropriate bid limit order action."""
+        sell_price = self.calculate_effective_sell_price(
+            self.bid_amount_in_btc, order_book_of_sell_exchange)
+        # Calculate the bid price to make the required profit.
+        bid_price = self.calculate_bid_limit_price(self.exchange_buy_on,
+                                                   self.exchange_sell_on,
+                                                   sell_price,
+                                                   self.profit_target)
+        # Create and return the action.
+        bid_action = CreateOrder(self.exchange_buy_on,
+                                 CreateOrder.Side.BID,
+                                 CreateOrder.Type.LIMIT,
+                                 amount=self.bid_amount_in_btc,
+                                 price=bid_price)
+        return bid_action
 
     @staticmethod
     def should_cancel_order(original_price, new_best_price, threshold):
@@ -195,6 +196,9 @@ class OneWayPairArbitrage(trader.Algorithm):
         Determines if a bid limit order at original_price should be cancelled
         given that the most up-to-date recommendation for a bid limit order
         is new_best_price.
+
+        This is so simple it probably doesn't need separating, but the main
+        routine needs simplification, so it was separated.
 
         Args:
             original_price (Decimal): the price of the original bid limit order.

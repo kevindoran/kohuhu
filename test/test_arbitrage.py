@@ -4,12 +4,11 @@ import kohuhu.trader
 
 
 def test_one_way_pair_arbitrage():
-    algorithm = arbitrage.OneWayPairArbitrage()
-
     # It doesn't actually used these exchanges. The exchanges just have to be
     # something for which we have fee data.
     buy_on_exchange = 'gdax_sandbox'
     sell_on_exchange = 'gemini_sandbox'
+    algorithm = arbitrage.OneWayPairArbitrage(buy_on_exchange, sell_on_exchange)
     trader = kohuhu.trader.Trader(algorithm, [buy_on_exchange, sell_on_exchange])
     trader.initialize()
 
