@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from datetime import datetime
 
 
 class ExchangeSlice:
@@ -263,9 +264,16 @@ class Fetcher:
 
 
 class Slice:
-    """Combines exchange slices."""
+    """Combines exchange slices.
+
+    Attributes:
+        timestamp (datetime.Datetime): the time the slice was created. This is
+            used by Algorithms instead of datetime.datetime.now().
+    """
+
     def __init__(self):
         self._exchange_slices = {}
+        self.timestamp = datetime.now()
 
     def for_exchange(self, exchange_id):
         return self._exchange_slices[exchange_id]
