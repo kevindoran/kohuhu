@@ -141,6 +141,18 @@ class OneWayPairArbitrage(trader.Algorithm):
         return actions
 
     def create_market_ask_order(self, latest_fill_amount):
+        """Create a market ask order.
+
+        After the bid limit order has been filled more, call this method to
+        make a ask market order on the other exchange.
+
+        Args:
+            latest_fill_amount (Decimal): the amount of the bid limit order
+                that has been filled.
+
+        Returns:
+            (CreateOrder): a ask market order.
+        """
         fill_diff = latest_fill_amount - self._previous_fill_amount
         # TODO: What is the minimum amount of bitcoin we should be buying,
         # or does it not matter?
