@@ -1,8 +1,10 @@
 import kohuhu.trader as trader
 from kohuhu.trader import CreateOrder
+from kohuhu.trader import CancelOrder
 import kohuhu.exchanges as exchanges
 from decimal import Decimal
 import logging
+import datetime
 
 
 class OneWayPairArbitrage(trader.Algorithm):
@@ -11,13 +13,18 @@ class OneWayPairArbitrage(trader.Algorithm):
 
     def __init__(self):
         super().__init__()
+        self.limit_order_update_period = datetime.timedelta(seconds=10)
+        self.poll_period = datetime.timedelta(milliseconds=900)
+        self.last_run_at = datetime.datetime.min
         self.exchange_buy_on = None
         self.exchange_sell_on = None
         self.live_limit_order = None
         self.market_orders = []
+        self.cancelled_order = False
         self.max_bid_amount_in_btc = Decimal(0.5)
         self.bid_amount_in_btc = Decimal(0.5)
         self.previous_fill_amount = Decimal(0)
+        self.order_update_threshold = Decimal(0.1) # percent
         self.profit_target = Decimal(0.05)  # percent.
 
     def initialize(self, exchanges_to_use):
@@ -27,11 +34,24 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.exchange_buy_on = exchanges_to_use[0]
         self.exchange_sell_on = exchanges_to_use[1]
 
-    def on_data(self, slice):
+    def on_data(self, data_slice):
+        actions = []
+        should_poll = \
+            (datetime.datetime.now() - self.last_run_at) >= self.poll_period
+        if not should_poll:
+            return actions
+
+        # The polling is controlled by the data slice.
+        self.last_run_at = data_slice.timestamp
+
+        should_update_limit_order = \
+            (datetime.datetime.now() - data_slice.timestamp) >= \
+            self.limit_order_update_period
+
+        order_book = data_slice.for_exchange(self.exchange_sell_on).order_book
         if not self.live_limit_order:
             # No buy limit action has been created yet. Make one.
             # Calculate the BTC market price on the exchange to sell on.
-            order_book = slice.for_exchange(self.exchange_sell_on).order_book
             sell_price = self.calculate_effective_sell_price(
                 self.bid_amount_in_btc, order_book)
             # Calculate the bid price to make a certain profit.
@@ -46,20 +66,24 @@ class OneWayPairArbitrage(trader.Algorithm):
                                      amount=self.bid_amount_in_btc,
                                      price=bid_price)
             self.live_limit_order = bid_action
-            return [bid_action, ]
+            actions.append(bid_action)
+            return actions
         else:
-            # We have a buy limit action.
+            # We have already created a buy limit order action.
             if self.live_limit_order.order_id is not None:
                 # The action has been executed and the order has been placed.
                 # Every time the order gets more filled, make a market sell
                 # order on the other exchange by the fill amount.
-                order = slice.for_exchange(self.exchange_buy_on) \
+                order = data_slice.for_exchange(self.exchange_buy_on) \
                     .order(self.live_limit_order.order_id)
                 if order['amount'] == 0:
                     raise Exception("Ops, we made an order for 0 BTC on {}. "
                                     "Something isn't right."
                                     .format(self.exchange_buy_on))
                 fill_amount = Decimal(order['filled'])
+                # TODO: Do we need rounding here? What is the minimum amount
+                # of bitcoin we should be buying?
+                remaining = self.bid_amount_in_btc - fill_amount
                 if fill_amount > self.bid_amount_in_btc:
                     raise Exception(
                         "Something isn't right. Our order {} got filled ({}) "
@@ -80,14 +104,15 @@ class OneWayPairArbitrage(trader.Algorithm):
                             self.live_limit_order.order_id,
                             self.previous_fill_amount, fill_amount, fill_diff,
                             self.exchange_sell_on))
-                    marketBidAction = CreateOrder(self.exchange_sell_on,
-                                                  CreateOrder.Side.ASK,
-                                                  CreateOrder.Type.MARKET,
-                                                  amount=fill_diff)
+                    market_bid_action = CreateOrder(self.exchange_sell_on,
+                                                    CreateOrder.Side.ASK,
+                                                    CreateOrder.Type.MARKET,
+                                                    amount=fill_diff)
 
                     # Store the order action, although I'm not sure if we
                     # will need them again. Maybe for logging.
-                    self.market_orders.append(marketBidAction)
+                    self.market_orders.append(market_bid_action)
+                    self.previous_fill_amount = fill_amount
 
                     if fill_amount == self.bid_amount_in_btc:
                         logging.info("Our buy limit order ({}) on {} has been "
@@ -95,16 +120,47 @@ class OneWayPairArbitrage(trader.Algorithm):
                                      .format(self.live_limit_order.order_id,
                                      self.exchange_buy_on))
                         self.live_limit_order = None
-                    return [marketBidAction]
+                    actions.append(market_bid_action)
                 else:
-                    logging.info("Order action has been placed, but it's not "
-                                 "completed yet.")
-                    return []
+                    logging.info("The limit buy order has not been filled any "
+                                 "further.")
 
+                if should_update_limit_order:
+                    # We have created a limit order previously, but it is time
+                    # to check if it needs updating.
+                    if not self.live_limit_order:
+                        logging.info("The order ({}) on {} was fully filled on "
+                                     "the same update tick that the order was "
+                                     "due to be updated. No further action "
+                                     "taken.")
+                    else:
+                        # TODO: do we want to make the new order smaller?
+                        remaining = self.bid_amount_in_btc - \
+                                    self.previous_fill_amount
+                        new_best_price = self.calculate_effective_sell_price(
+                            remaining, order_book)
+                        original_price = Decimal(order['price'])
+                        if self.should_cancel_order(
+                                original_price, new_best_price,
+                                self.order_update_threshold):
+                            actions.append(
+                                CancelOrder(self.exchange_buy_on,
+                                            self.live_limit_order.order_id))
             else:
                 # The order hasn't been placed yet. Nothing to do.
                 logging.info("Waiting for order action to be placed.")
-                return []
+                if should_update_limit_order:
+                    logging.warning("The limit order hasn't been placed yet, "
+                                    "but the order update period has been "
+                                    "reached. There may be a bug, or the limit "
+                                    "order update period might be too short.")
+        return actions
+
+    @staticmethod
+    def should_cancel_order(original_price, new_best_price, threshold):
+        should_cancel = (new_best_price - original_price) / new_best_price > \
+                        threshold
+        return  should_cancel
 
     @staticmethod
     def calculate_effective_sell_price(sell_amount, order_book):
