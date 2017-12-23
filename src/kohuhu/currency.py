@@ -23,4 +23,6 @@ def round_to_cents(unrounded):
     return unrounded.quantize(ONE_CENT, decimal.ROUND_HALF_UP)
 
 
-
+def round_down_to_cents(unrounded):
+    """Round a given Decimal down to the nearest 2 decimal places."""
+    return unrounded.quantize(ONE_CENT, decimal.ROUND_DOWN)
