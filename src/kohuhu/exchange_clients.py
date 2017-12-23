@@ -35,12 +35,13 @@ class Exchange:
 
 class GdaxExchange(Exchange):
 
-    def __init__(self):
+    def __init__(self, new_data_callback):
         super().__init__()
         self.count = 0
         self.best_bid = 0
         self.best_ask = 1000000
         self.message_queue = asyncio.Queue()
+        self.new_data_callback = new_data_callback
 
 
     async def initialize(self):
@@ -77,6 +78,7 @@ class GdaxExchange(Exchange):
             while True:
                 message = await self.message_queue.get()
                 self.handle_message(message)
+                self.new_data_callback()
         except asyncio.CancelledError:
             print("Received cancellation error: exiting process_queue")
             return
@@ -114,11 +116,11 @@ class GdaxExchange(Exchange):
         #
         # print(f"{best_bid} - {second_bid}")
         # print(self.order_book.bids)
-        best_bid = self.order_book.bids.iloc[0]
-        if best_bid != self.best_bid:
-            print("")
-            print(f"New best bid: {best_bid}")
-            self.best_bid = best_bid
+        # best_bid = self.order_book.bids.iloc[0]
+        # if best_bid != self.best_bid:
+        #     print("")
+        #     print(f"New best bid: {best_bid}")
+        #     self.best_bid = best_bid
 
 
 
@@ -128,12 +130,12 @@ class GdaxExchange(Exchange):
 
         bid_quotes = sortedcontainers.SortedDict(operator.neg)
         ask_quotes = SortedDict()
-        for bid in bids[:5]:
+        for bid in bids:
             bid_price = Decimal(bid[0])
             bid_quantity = Decimal(bid[1])
             bid_quotes[bid_price] = bid_quantity
 
-        for ask in asks[:5]:
+        for ask in asks:
             ask_price = Decimal(ask[0])
             ask_quantity = Decimal(ask[1])
             ask_quotes[ask_price] = ask_quantity
@@ -169,13 +171,26 @@ class GdaxExchange(Exchange):
 
 
 
-gdax = GdaxExchange()
+
 
 # q = Queue()
 # t = threading.Thread(target=gdax.initialize)
 # print("here")
 
 loop = asyncio.get_event_loop()
+
+best_bid = 0
+
+def on_data():
+    global best_bid
+    new_best_bid = gdax.order_book.bids.iloc[0]
+    if new_best_bid != best_bid:
+        print("")
+        print(f"New best bid: {new_best_bid}")
+        best_bid = new_best_bid
+
+gdax = GdaxExchange(on_data)
+
 
 gdax_websocket_listener_task = asyncio.ensure_future(gdax.initialize())
 processor_task = asyncio.ensure_future(gdax.process_queue())
