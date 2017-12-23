@@ -163,6 +163,11 @@ class CreateOrder(Action):
         MARKET = auto()
         LIMIT = auto()
 
+    class Status(Enum):
+        PENDING = auto()
+        SUCCESS = auto()
+        FAILED = auto()
+
     def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__(exchange_id)
         self.amount = amount
@@ -170,6 +175,8 @@ class CreateOrder(Action):
         self.side = side
         self.type = type
         self.order_id = None
+        # Note: this property might move to the Action class.
+        self.status = self.Status.PENDING
 
     @Action.name.getter
     def name(self):
