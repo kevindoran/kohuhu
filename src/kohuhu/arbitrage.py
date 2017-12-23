@@ -76,7 +76,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             return actions
         self._last_run_at = data_slice.timestamp
 
-        # Allow limit order update if  limit_order_update_period has elapsed
+        # Allow limit order update if limit_order_update_period has elapsed
         # since last update or creation.
         should_update_limit_order = \
             self._last_limit_order_update_at is not None and \
@@ -94,8 +94,12 @@ class OneWayPairArbitrage(trader.Algorithm):
             return actions
 
         # There is a bid limit action.
-        # If the order hasn't been placed yet, do nothing.
-        if self._live_limit_action.order_id is None:
+        if self._live_limit_action.status == CreateOrder.Status.FAILED:
+            logging.warning("Resetting the algorithm as the limit bid order "
+                            "failed to be placed.")
+            self._live_limit_action = None
+            return actions
+        elif self._live_limit_action.status == CreateOrder.Status.PENDING:
             # The order hasn't been placed yet. Nothing to do.
             logging.info("Waiting for order action to be placed.")
             if should_update_limit_order:
@@ -104,7 +108,12 @@ class OneWayPairArbitrage(trader.Algorithm):
                                 "reached. There may be a bug, or the limit "
                                 "order update period might be too short.")
             return actions
-
+        else:
+            # The order must have been successful.
+            if self._live_limit_action.status != CreateOrder.Status.SUCCESS:
+                raise Exception("The order status should be either FAILED, "
+                                "PENDING or SUCCESS.")
+            
         # The action has been executed and the order has been placed. Every time
         # the order gets more filled, make a market sell order on the other
         # exchange by the fill amount.

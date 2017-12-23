@@ -1,6 +1,7 @@
 import pytest
 import kohuhu.arbitrage as arbitrage
 import kohuhu.trader
+from kohuhu.trader import CreateOrder
 
 
 def test_one_way_pair_arbitrage():
@@ -35,8 +36,8 @@ def test_one_way_pair_arbitrage():
     actions = trader.step()
     assert len(actions) == 1
     buy_order_action = actions[0]
-    assert buy_order_action.type == kohuhu.trader.CreateOrder.Type.LIMIT
-    assert buy_order_action.side == kohuhu.trader.CreateOrder.Side.BID
+    assert buy_order_action.type == CreateOrder.Type.LIMIT
+    assert buy_order_action.side == CreateOrder.Side.BID
     assert buy_order_action.exchange == buy_on_exchange
 
     fake_slice.timestamp = fake_slice.timestamp + algorithm.poll_period
@@ -47,6 +48,7 @@ def test_one_way_pair_arbitrage():
     # the order isn't completed yet.
     order_id = '5'
     buy_order_action.order_id = order_id
+    buy_order_action.status = CreateOrder.Status.SUCCESS
     order_info = {
         'id': order_id,
         'amount': algorithm.bid_amount_in_btc,
