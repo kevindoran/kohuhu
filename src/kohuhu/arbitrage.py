@@ -5,6 +5,7 @@ import kohuhu.exchanges as exchanges
 from decimal import Decimal
 import logging
 import datetime
+import decimal
 import kohuhu.currency as currency
 
 
@@ -247,9 +248,15 @@ class OneWayPairArbitrage(trader.Algorithm):
                                                     self.profit_target)
         btc_amount = self.bid_amount_in_btc
         usd_balance = Decimal(balance_on_bid_exchange['free']['USD'])
+
         # TODO: is it okay to assume that the fees are not on top, and thus they
         # will not cause us to run our balance negative with this calculation?
-        max_can_afford = currency.round_down_to_cents(usd_balance / btc_amount)
+
+        # Let's round to 3 dp so that the numbers are easy for us to watch.
+        # Round down, as we need end up with an amount we can afford.
+        three_dp = "0.001"
+        max_can_afford = (usd_balance / btc_amount).quantize(three_dp,
+                                                             decimal.ROUND_DOWN)
         btc_amount = min(btc_amount, max_can_afford)
         # Create and return the action.
         bid_action = CreateOrder(self.exchange_buy_on, CreateOrder.Side.BID,
