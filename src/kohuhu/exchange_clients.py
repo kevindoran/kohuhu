@@ -30,44 +30,19 @@ class OrderBook:
 
 
 class Exchange:
-    def __init__(self):
-        self.order_book = self.order_book = OrderBook(
-            datetime.datetime.utcnow(),
-            bids=sortedcontainers.SortedDict(operator.neg),
-            asks=SortedDict())
-
-
-class GdaxExchange(Exchange):
 
     # If we have this many pending updates to add to the orderbook, our processing may not
     # be keeping up with the incoming websocket updates.
     UPDATE_QUEUE_WARNING_LIMIT = 100
 
-    def __init__(self, order_book_update_callback):
-        """Creates a new Exchange"""
-        super().__init__()
-        self.channels = ['heartbeat', 'level2']
-        self.symbols = ['BTC-USD']  # Only on symbol is currently supported
-        self.message_queue = asyncio.Queue()
+    def __init__(self, order_book_update_callback, exchange_offline_callback):
+        self.order_book = self.order_book = OrderBook(
+            datetime.datetime.utcnow(),
+            bids=sortedcontainers.SortedDict(operator.neg),
+            asks=SortedDict())
         self.order_book_update_callback = order_book_update_callback
-
-    async def initialize(self):
-        """TODO"""
-        async with websockets.connect('wss://ws-feed.gdax.com') as websocket:
-            subscribe_message = {
-                'type': 'subscribe',
-                'product_ids': self.symbols,
-                'channels': self.channels
-            }
-
-            # We must send a subscribe message within 5 seconds of opening the websocket
-            await websocket.send(json.dumps(subscribe_message))
-
-            # This blocks waiting for a new websocket message
-            async for message in websocket:
-                if self.message_queue.qsize() >= GdaxExchange.UPDATE_QUEUE_WARNING_LIMIT:
-                    log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
-                await self.message_queue.put(message)
+        self.exchange_offline_callback = exchange_offline_callback
+        self.message_queue = asyncio.Queue()
 
     async def process_queue(self):
         """TODO"""
@@ -81,6 +56,36 @@ class GdaxExchange(Exchange):
 
             # Call the callback, our orderbook is now up to date.
             self.order_book_update_callback()
+
+
+class GdaxExchange(Exchange):
+    def __init__(self, order_book_update_callback, exchange_offline_callback):
+        """Creates a new Exchange"""
+        super().__init__(order_book_update_callback, exchange_offline_callback)
+        self.channels = ['heartbeat', 'level2']
+        self.symbols = ['BTC-USD']  # Only on symbol is currently supported
+
+    async def initialize(self):
+        """TODO"""
+        try:
+            async with websockets.connect('wss://ws-feed.gdax.com') as websocket:
+                subscribe_message = {
+                    'type': 'subscribe',
+                    'product_ids': self.symbols,
+                    'channels': self.channels
+                }
+
+                # We must send a subscribe message within 5 seconds of opening the websocket
+                await websocket.send(json.dumps(subscribe_message))
+
+                # This blocks waiting for a new websocket message
+                async for message in websocket:
+                    if self.message_queue.qsize() >= GdaxExchange.UPDATE_QUEUE_WARNING_LIMIT:
+                        log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
+                    await self.message_queue.put(message)
+        except websockets.exceptions.InvalidStatusCode as ex:
+            if str(ex.status_code).startswith("5"):
+                self.exchange_offline_callback(message=ex)
 
     def _handle_message(self, message):
         """TODO"""
@@ -197,41 +202,26 @@ class GdaxExchange(Exchange):
 
 class GeminiExchange(Exchange):
     """TODO"""
-    def __init__(self, order_book_update_callback):
+    def __init__(self, order_book_update_callback, exchange_offline_callback):
         """Creates a new Exchange"""
-        super().__init__()
+        super().__init__(order_book_update_callback, exchange_offline_callback)
         self.channels = ['heartbeat', 'level2']
         self.symbols = ['BTC-USD'] # Only on symbol is currently supported
         self.message_queue = asyncio.Queue()
-        self.order_book_update_callback = order_book_update_callback
-
-        self.order_book = OrderBook(
-            datetime.datetime.utcnow(),
-            bids=sortedcontainers.SortedDict(operator.neg),
-            asks=SortedDict())
 
     async def initialize(self):
         """TODO"""
-        async with websockets.connect('wss://api.gemini.com/v1/marketdata/BTCUSD?heartbeat=true') as websocket:
+        try:
+            async with websockets.connect('wss://api.gemini.com/v1/marketdata/BTCUSD?heartbeat=true') as websocket:
 
-            # This blocks waiting for a new websocket message
-            async for message in websocket:
-                if self.message_queue.qsize() >= 100:
-                    log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
-                await self.message_queue.put(message)
-
-    async def process_queue(self):
-        """TODO"""
-        while True:
-            message = await self.message_queue.get()
-            self._handle_message(message)
-            if not self.message_queue.empty():
-                # If we've already got another update, then update our
-                # orderbook before we call the callback.
-                continue
-
-            # Call the callback, our orderbook is now up to date.
-            self.order_book_update_callback()
+                # This blocks waiting for a new websocket message
+                async for message in websocket:
+                    if self.message_queue.qsize() >= 100:
+                        log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
+                    await self.message_queue.put(message)
+        except websockets.exceptions.InvalidStatusCode as ex:
+            if str(ex.status_code).startswith("5"):
+                self.exchange_offline_callback(message=ex)
 
     def _handle_message(self, message):
         """TODO"""
@@ -304,14 +294,21 @@ def on_data():
         else:
             print(f":( Difference is: {percent:.2f}")
 
+
+def exchange_offline(message):
+    # Do something!
+    print(message)
+    #raise Exception("Exchange offline")
+
+
 # Main event loop
 loop = asyncio.get_event_loop()
 
 # Create our exchanges, these take an on_data callback every time the order book is updated
 print("Connecting to gemini orderbook websocket. Every '*' is a gemini orderbook update.")
-gemini = GeminiExchange(on_data)
+gemini = GeminiExchange(on_data, exchange_offline)
 print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook update.")
-gdax = GdaxExchange(on_data)
+gdax = GdaxExchange(on_data, exchange_offline)
 
 # Create tasks to listen to the websocket
 gemini_websocket_listener_task = asyncio.ensure_future(gemini.initialize())
