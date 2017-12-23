@@ -138,7 +138,35 @@ class OneWayPairArbitrage(trader.Algorithm):
                 # between actual updates, or just checks (more frequent)?
                 self._last_limit_order_update_at = time_now
                 self._live_limit_action = None
+        self._post_on_data_checks(actions)
         return actions
+
+    def _post_on_data_checks(self, action_list):
+        for action in action_list:
+            # Don't make any market bid orders.
+            if action.Type == CreateOrder.Type.MARKET and \
+                    action.Side == action.Side.BID:
+                raise Exception("This algorithm shouldn't be making market bid "
+                                "orders.")
+            # Don't make any limit ask orders.
+            if action.Type == CreateOrder.Type.LIMIT and \
+                    action.Side == action.Side.ASK:
+                raise Exception("This algorithm shouldn't be making limit ask "
+                                "orders.")
+            # Don't make asks on the exchange to bid on.
+            if action.exchange == self.exchange_buy_on:
+                if action.Side == CreateOrder.Side.ASK:
+                    raise Exception("This algorithm shouldn't be making ask "
+                                    "orders on the {} exchange."
+                                    .format(self.exchange_buy_on))
+            # Don't make bids on the exchange to ask on.
+            if action.exchange == self.exchange_sell_on:
+                if action.Side == CreateOrder.Side.BID:
+                    raise Exception("This algorithm shouldn't be making bid "
+                                    "orders on the {} exchange."
+                                    .format(self.exchange_sell_on))
+
+
 
     def _create_market_ask_order(self, latest_fill_amount):
         """Create a market ask order.
