@@ -37,6 +37,8 @@ class OneWayPairArbitrage(trader.Algorithm):
             accounting for maker/taker fees.
     """
 
+    default_bid_amount_btc = Decimal(0.5)
+
     def __init__(self, exchange_to_buy_on, exchange_to_sell_on):
         """Create the algorithm.
 
@@ -55,9 +57,9 @@ class OneWayPairArbitrage(trader.Algorithm):
         # for us to understand how much we are spending. It also more directly
         # relates to how much we will have to deposit into our account.
         #self.bid_amount_in_usd = Decimal(500)
-        self.bid_amount_in_btc = Decimal(0.5)
-        self.order_update_threshold = Decimal(0.1) # percent
-        self.profit_target = Decimal(0.05)  # percent.
+        self.bid_amount_in_btc = Decimal("0.5")
+        self.order_update_threshold = Decimal("0.1") # percent
+        self.profit_target = Decimal("0.05")  # percent.
         self._last_run_at = datetime.datetime.min
         self._last_limit_order_update_at = None
         self._live_limit_action = None
@@ -95,7 +97,10 @@ class OneWayPairArbitrage(trader.Algorithm):
         # Create a bid limit action if there is none.
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.
-            self._live_limit_action = self._create_bid_limit_order(order_book)
+            balance = data_slice.for_exchange(self.exchange_buy_on).balance
+            print(balance)
+            self._live_limit_action = self._create_bid_limit_order(order_book,
+                                                                   balance)
             self._last_limit_order_update_at = time_now
             actions.append(self._live_limit_action)
             return actions
@@ -254,7 +259,7 @@ class OneWayPairArbitrage(trader.Algorithm):
 
         # Let's round to 3 dp so that the numbers are easy for us to watch.
         # Round down, as we need end up with an amount we can afford.
-        three_dp = "0.001"
+        three_dp = Decimal("0.001")
         max_can_afford = (usd_balance / btc_amount).quantize(three_dp,
                                                              decimal.ROUND_DOWN)
         btc_amount = min(btc_amount, max_can_afford)
@@ -371,6 +376,10 @@ class OneWayPairArbitrage(trader.Algorithm):
         # fee_factor / profit_factor = bid_limit / e2.highest_bid
         # bid_limit = fee_factor * e2.highest_bid / profit_factor
         #
+        # Relationship:
+        #  fees go up  -> bid goes down
+        #  profit target goes up -> bid goes down
+        #
         # Example:
         #   buy_maker_fee = 0.004  # 0.4 %
         #   sell_taker_fee = 0.002 # 0.2 %
@@ -379,7 +388,8 @@ class OneWayPairArbitrage(trader.Algorithm):
         #   fee_factor = (1/(1+0.004)) * (1/(1+0.002)) = 0.994 (3dp)
         #   bid_limit = 0.994 * 16,000 / 1.05
         #             = 15147 $USD / BTC (5 sf)
+        profit_factor = Decimal(1) + profit_target
         fee_factor = exchanges.fee_as_factor(buy_maker_fee) * \
                      exchanges.fee_as_factor(sell_taker_fee)
-        bid_limit = fee_factor * market_price_to_sell / profit_target
+        bid_limit = fee_factor * market_price_to_sell / profit_factor
         return bid_limit
