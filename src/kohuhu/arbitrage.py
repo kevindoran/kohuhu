@@ -5,6 +5,8 @@ import kohuhu.exchanges as exchanges
 from decimal import Decimal
 import logging
 import datetime
+import decimal
+import kohuhu.currency as currency
 
 
 class OneWayPairArbitrage(trader.Algorithm):
@@ -48,6 +50,11 @@ class OneWayPairArbitrage(trader.Algorithm):
         self.limit_order_update_period = datetime.timedelta(seconds=10)
         self.exchange_buy_on = exchange_to_buy_on
         self.exchange_sell_on = exchange_to_sell_on
+        # TODO:
+        # It is probably easier to have the bid amount in USD, as it is easier
+        # for us to understand how much we are spending. It also more directly
+        # relates to how much we will have to deposit into our account.
+        #self.bid_amount_in_usd = Decimal(500)
         self.bid_amount_in_btc = Decimal(0.5)
         self.order_update_threshold = Decimal(0.1) # percent
         self.profit_target = Decimal(0.05)  # percent.
@@ -175,8 +182,6 @@ class OneWayPairArbitrage(trader.Algorithm):
                                     "orders on the {} exchange."
                                     .format(self.exchange_sell_on))
 
-
-
     def _create_market_ask_order(self, latest_fill_amount):
         """Create a market ask order.
 
@@ -217,28 +222,46 @@ class OneWayPairArbitrage(trader.Algorithm):
             # limit order, as it is finished.
         return market_ask_action
 
-    def _create_bid_limit_order(self, order_book_of_sell_exchange):
+    def _create_bid_limit_order(self, order_book_of_ask_exchange,
+                                balance_on_bid_exchange):
         """Create the appropriate bid limit order action.
 
+        The bid should be for the self.bid_amount_usd worth of Bitcoin, or
+        if our balance is not enough, the maximum we can trade.
+
         Args:
-            order_book_of_sell_exchange (ccxt order book): the order book of
+            order_book_of_ask_exchange (ccxt order book): the order book of
                 the exchange that BTC will be sold on. This is needed to
                 calculate the correct price for the bid limit order.
+            balance_on_bid_exchange (ccxt balance): the balance on the exchange
+                a bid will be placed on.
 
         Returns:
             (CreateOrder): the bid limit order that was created.
         """
         sell_price = self._calculate_effective_sell_price(
-            self.bid_amount_in_btc, order_book_of_sell_exchange)
+            self.bid_amount_in_btc, order_book_of_ask_exchange)
         # Calculate the bid price to make the required profit.
         bid_price = self._calculate_bid_limit_price(self.exchange_buy_on,
                                                     self.exchange_sell_on,
                                                     sell_price,
                                                     self.profit_target)
+        btc_amount = self.bid_amount_in_btc
+        usd_balance = Decimal(balance_on_bid_exchange['free']['USD'])
+
+        # TODO: is it okay to assume that the fees are not on top, and thus they
+        # will not cause us to run our balance negative with this calculation?
+
+        # Let's round to 3 dp so that the numbers are easy for us to watch.
+        # Round down, as we need end up with an amount we can afford.
+        three_dp = "0.001"
+        max_can_afford = (usd_balance / btc_amount).quantize(three_dp,
+                                                             decimal.ROUND_DOWN)
+        btc_amount = min(btc_amount, max_can_afford)
         # Create and return the action.
         bid_action = CreateOrder(self.exchange_buy_on, CreateOrder.Side.BID,
-                                 CreateOrder.Type.LIMIT,
-                                 amount=self.bid_amount_in_btc, price=bid_price)
+                                 CreateOrder.Type.LIMIT, amount=btc_amount,
+                                 price=bid_price)
         return bid_action
 
     def _sanity_check_order(self, order):
