@@ -146,6 +146,7 @@ def assert_single_market_ask(actions, amount=None):
             rounded = ask_order_action.amount.quantize(Decimal(10)**-10)
             assert amount == rounded
 
+
 def test_makes_limit_order(exch_2_order_book_data):
     """Tests that the algorithm makes a limit buy order as it's first action.
 
