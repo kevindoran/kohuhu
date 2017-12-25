@@ -1,9 +1,101 @@
 from enum import Enum, auto
+import time
 from datetime import datetime
+import asyncio
+from decimal import Decimal
+import logging
+
+log = logging.getLogger(__name__)
 
 
-class ExchangeSlice:
-    """Data from a single at a point in time.
+class Publisher:
+    """Calls registered callbacks."""
+
+    def __init__(self):
+        self._update_callbacks = set()
+        self.last_updated_at = datetime.min
+
+    def updated(self, data, timestamp=None):
+        self.last_updated_at = timestamp if timestamp else datetime.now()
+        for c in self._update_callbacks:
+            c(data)
+
+    def add_callback(self, callback):
+        self._update_callbacks.add(callback)
+
+    def remove_callback(self, callback):
+        self._update_callbacks.remove(callback)
+
+
+class OrderBook:
+    """Represents an order book on an exchange.
+
+    Attributes:
+        timestamp (datetime): UTC time of when the order book was last updated.
+        bids ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
+            key:value pairs. The first element contains the highest bid. Both price and
+            quantity are Decimals.
+        asks ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
+            key:value pairs. The first element contains the lowest ask. Both price and
+            quantity are Decimals.
+    """
+    def __init__(self, timestamp, bids, asks):
+        self.timestamp = timestamp
+        self._bids = bids
+        self._asks = asks
+        self.bids_publisher = Publisher()
+        self.asks_publisher = Publisher()
+        self.any_publisher = Publisher()
+
+    def set_bids_remaining(self, at_price, remaining):
+        self._bids[at_price] = remaining
+        self.bids_publisher.updated(self)
+        self.any_publisher.updated(self)
+
+    def bids_remaining(self, at_price):
+        return self._bids[at_price]
+
+
+class Order:
+    class Side(Enum):
+        ASK = auto()
+        BID = auto()
+
+    class Type(Enum):
+        MARKET = auto()
+        LIMIT = auto()
+
+    class Status(Enum):
+        OPEN = auto()
+        CLOSED = auto()
+        CANCELLED = auto()
+
+    def __init__(self):
+        self.price = None
+        self.symbol = None
+        self.side = None
+        self.type = None
+        self.amount = None
+        self.filled = None
+        self.remaining = None
+        self.status = None
+
+
+class Balance:
+
+    def __init__(self):
+        self._free = {}
+        self._on_hold = {}
+
+    def free(self, symbol):
+        pass
+
+    def on_hold(self, symbol):
+        pass
+
+
+class ExchangeState:
+    """Latest information for an exchange.
 
     Note: I'm not sure what data is needed and how granular it should be given.
     I just guessed at some simple methods to begin with.
@@ -16,8 +108,6 @@ class ExchangeSlice:
         self._orders = {}
         self._balance = None
         self.fetcher = fetcher
-        self.always_fetch_order_book = True
-        self.always_fetch_balance = False
 
     def populate(self):
         self._order_book = None
@@ -28,8 +118,7 @@ class ExchangeSlice:
         if self.always_fetch_balance:
             self._order_book = self.fetcher.get_balance(self.exchange)
 
-    @property
-    def order_book(self):
+    def order_book(self, force_update=False):
         """
         The order book for the exchange.
 
@@ -49,18 +138,14 @@ class ExchangeSlice:
             'datetime': '2017-07-05T18:47:14.692Z', // ISO8601 datetime string with milliseconds
         }
         """
-        if not self._order_book:
-            if self.always_fetch_order_book:
-                raise Exception("The order book for {} should have been "
-                                "pre-fetched.".format(self.exchange))
+        if force_update:
             self._order_book = self.fetcher.get_order_book()
         return self._order_book
 
-    @order_book.setter
-    def order_book(self, in_order_book):
+    def set_order_book(self, in_order_book):
         self._order_book = in_order_book
 
-    def order(self, order_id):
+    def order(self, order_id, force_update):
         """
         A specific order on the exchange.
 
@@ -86,15 +171,14 @@ class ExchangeSlice:
            'info':     { ... },         // original unparsed order structure
         }
         """
-        if not order_id in self._orders:
+        if force_update:
             self._orders[order_id] = self.fetcher.get_order(self.exchange, order_id)
-        return self._orders[order_id]
+        return self._orders.get(order_id, None)
 
     def set_order(self, order_id, order_info):
         self._orders[order_id] = order_info
 
-    @property
-    def balance(self):
+    def balance(self, force_update):
         """Returns the balance on the exchange.
 
         Follows the ccxt structure:
@@ -125,15 +209,32 @@ class ExchangeSlice:
             ...
         }
         """
-        if not self._balance:
-            if self.always_fetch_balance:
-                raise Exception("Balance should have been pre-fetched.")
+        if force_update:
             self._balance = self.fetcher.get_balance()
         return self._balance
 
-    @balance.setter
-    def balance(self, balance):
+    def set_balance(self, balance):
         self._balance = balance
+
+
+class State:
+    """Latest state of all exchanges.
+
+    Attributes:
+        timestamp (datetime.Datetime): the time the slice was created. This is
+            used by Algorithms instead of datetime.datetime.now().
+    """
+
+    def __init__(self):
+        self._exchange_state = {}
+        self.timestamp = datetime.now()
+
+    def for_exchange(self, exchange_id):
+        return self._exchange_state[exchange_id]
+
+    def add_exchange(self, exchange_state):
+        self._exchange_state[exchange_state.exchange_id] = exchange_state
+
 
 class Algorithm:
     """Subclass Algorithm and pass it to Trader to make trades.
@@ -145,12 +246,13 @@ class Algorithm:
     data and to check the behaviour of the actions without having them run.
     """
     def __init__(self):
-        self.exchanges = []
+        pass
 
-    def initialize(self, exchanges_to_use):
-        self.exchanges = exchanges_to_use
+    def initialize(self, state, timer):
+        raise NotImplementedError("Subclasses should implement this method.")
+        # timer.do_every(timedelta(seconds=1), self.tick)
 
-    def on_data(self, slice):
+    def on_tick(self):
         raise NotImplementedError("Subclasses should implement this method.")
 
 
@@ -185,14 +287,6 @@ class CreateOrder(Action):
             order_id that is created.
     """
 
-    class Side(Enum):
-        ASK = auto()
-        BID = auto()
-
-    class Type(Enum):
-        MARKET = auto()
-        LIMIT = auto()
-
     class Status(Enum):
         PENDING = auto()
         SUCCESS = auto()
@@ -204,7 +298,7 @@ class CreateOrder(Action):
         self.price = price
         self.side = side
         self.type = type
-        self.order_id = None
+        self.order = None
         # Note: this property might move to the Action class.
         self.status = self.Status.PENDING
 
@@ -219,6 +313,7 @@ class CreateOrder(Action):
     def __repr__(self):
         return "{} for {} BTC at {} $/BTC on {}".format(self.name, self.amount,
             self.price if self.price else "market rate", self.exchange)
+
 
 class CancelOrder(Action):
     """Represents the action of cancelling an order."""
@@ -300,23 +395,33 @@ class Fetcher:
                             .format(exchange_id))
 
 
-class Slice:
-    """Combines exchange slices.
+class Timer:
+    """A callback scheduler.
 
-    Attributes:
-        timestamp (datetime.Datetime): the time the slice was created. This is
-            used by Algorithms instead of datetime.datetime.now().
+    Inspired from SO: https://stackoverflow.com/a/28034554/754300
     """
-
     def __init__(self):
-        self._exchange_slices = {}
-        self.timestamp = datetime.now()
+        self.tasks = []
 
-    def for_exchange(self, exchange_id):
-        return self._exchange_slices[exchange_id]
+    def do_every(self, period, f):
+        timer_task = asyncio.ensure_future(self._do_every(period, f))
+        self.tasks.append(timer_task)
 
-    def set_slice(self, exchange_id, exchange_slice):
-        self._exchange_slices[exchange_id] = exchange_slice
+    async def _do_every(self, period, f):
+        def tick():
+            #t = time.time()
+            init_time = datetime.now()
+            count = 0
+            while True:
+                count += 1
+                target_time = init_time + count*period
+                diff = target_time - datetime.now()
+                yield max(diff, 0)
+        ticker = tick()
+        for delta in tick():
+            await asyncio.sleep(delta.seconds)
+            # await f() ?
+            f()
 
 
 class Trader:
@@ -336,33 +441,98 @@ class Trader:
         actions: a list of action tuples. Each list entry contains the actions
             that were created by the algorithm at a certain step.
     """
-    def __init__(self, algorithm, exchanges_to_use):
+    def __init__(self, algorithm, exchanges):
         self._algorithm = algorithm
+        self._timer = Timer()
         self._fetchers = {}
-        self.exchanges = exchanges_to_use
+        self._state = State()
+        self.exchanges = exchanges
         self.last_actions = []
-        self.next_slice = None
-
-    def set_fetcher(self, fetcher, supported_exchanges):
-        for id in supported_exchanges:
-            self._fetchers[id] = fetcher
+        for e in exchanges:
+            self._state.add_exchange(e.state)
 
     def initialize(self):
         """Calls initialize on the algorithm."""
-        self._algorithm.initialize(self.exchanges)
+        self._algorithm.initialize(self._state, self._timer)
 
-    def fetch_next_slice(self):
-        """Fetches data from the exchanges.
+    def start(self):
+        """Starts the trader.
 
-        When testing, this method doesn't need to be called, and the data
-        can be set directly.
+        When testing, this method doesn't need to be called, and the data can be
+        set directly.
         """
-        self.next_slice = Slice()
-        for id in self.exchanges:
-            fetcher = self._fetchers[id]
-            exchange_slice = ExchangeSlice(id, fetcher)
-            self.next_slice.set_slice(id, exchange_slice)
+        tasks = []
+        for e in self.exchanges:
+            tasks.append(asyncio.ensure_future(e.initialize()))
+            tasks.append(asyncio.ensure_future(e.process_queue()))
+        tasks.extend(self._timer.tasks)
+        loop = asyncio.get_event_loop()
+        try:
+            # Run the tasks. If everything works well, this will run forever.
+            finished, pending = loop.run_until_complete(
+            asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION))
 
-    def step(self):
-        self.last_actions = self._algorithm.on_data(self.next_slice)
-        return self.last_actions
+            # If we've got here, then a task has throw an exception.
+
+            # Finished task(s) have thrown an exception. Let's observe the task
+            # to log the exception.
+            for task in finished:
+                try:
+                    task.result()
+                except Exception as ex:
+                    log.exception(ex)
+
+            # Pending tasks are still running. Gracefully cancel them all.
+            for task in pending:
+                task.cancel()
+
+            # Wait for up to 2 seconds for the tasks to gracefully return.
+            finished_cancelled_tasks, pending_cancelled_tasks = \
+                loop.run_until_complete(asyncio.wait(pending, timeout=2))
+            try:
+                # They most likely finished because we told them to cancel, when
+                # we observe them we'll catch the asyncio.CancelledError.
+                for task in finished_cancelled_tasks:
+                    task.result()
+
+                # If a task is still pending it hasn't finished cleaning up in
+                # the timeout period and you'll see:
+                #   "Task was destroyed but it is pending."
+                # as we forcefully kill it.
+            except asyncio.CancelledError:
+                pass
+                # If a task does not have an outer try..except that catches
+                # CancelledError then t.result() will raise a CancelledError.
+                # This is fine.
+        finally:
+            loop.stop()
+            loop.close()
+
+
+# Draft area:
+
+class OrderActionSubscriber:
+    """Draft class for receiving granular order events.
+
+    When we transition from just having a simple on_data() call for the
+    algorithms, this class will come into use. Algorithms would implement this
+    interface and subscribe to the orders they make for updates.
+    """
+
+    def on_order_success(self, order_action):
+        pass
+
+    def on_order_accepted(self, order_action):
+        pass
+
+    def on_order_rejected(self, order_action):
+        pass
+
+    def on_order_fill(self, order_action):
+        pass
+
+    def on_onder_closed(self, order_action):
+        pass
+
+    def on_order_cancelled(self, order_action):
+        pass
