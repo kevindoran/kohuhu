@@ -92,16 +92,10 @@ class OneWayPairArbitrage(trader.Algorithm):
             (time_now - self._last_limit_order_update_at) >= \
                 self.limit_order_update_period
 
-        order_book = data_slice.for_exchange(self.exchange_sell_on).order_book
-
         # Create a bid limit action if there is none.
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.
-            balance = data_slice.for_exchange(self.exchange_buy_on).balance
-            print(balance)
-            self._live_limit_action = self._create_bid_limit_order(order_book,
-                                                                   balance)
-            self._last_limit_order_update_at = time_now
+            self._live_limit_action = self._create_bid_limit_order(data_slice)
             actions.append(self._live_limit_action)
             return actions
 
@@ -125,22 +119,12 @@ class OneWayPairArbitrage(trader.Algorithm):
             if self._live_limit_action.status != CreateOrder.Status.SUCCESS:
                 raise Exception("The order status should be either FAILED, "
                                 "PENDING or SUCCESS.")
-            
+
         # The action has been executed and the order has been placed. Every time
         # the order gets more filled, make a market sell order on the other
         # exchange by the fill amount.
-        order = data_slice.for_exchange(self.exchange_buy_on).order(
-            self._live_limit_action.order_id)
-        self._sanity_check_order(order)
-        fill_amount = Decimal(order['filled'])
-        # If our bid order has been filled more, create an ask order on the
-        # other exchange.
-        if fill_amount > self._previous_fill_amount:
-                ask_action = self._create_market_ask_order(fill_amount)
-                actions.append(ask_action)
-                return actions
-        else:
-            logging.info("The limit buy order has not been filled any further.")
+        more_actions = self._process_fill(data_slice)
+        actions.extend(more_actions)
 
         if should_update_limit_order:
             # We have created a limit order previously, but it is time to check
@@ -187,48 +171,56 @@ class OneWayPairArbitrage(trader.Algorithm):
                                     "orders on the {} exchange."
                                     .format(self.exchange_sell_on))
 
-    def _create_market_ask_order(self, latest_fill_amount):
-        """Create a market ask order.
+    def _process_fill(self, data_slice):
+        """After a bid order has been filled more, place new orders if needed.
 
         After the bid limit order has been filled more, call this method to
-        make a ask market order on the other exchange.
+        make a ask market order on the other exchange. This function also
+        creates a new bid limit order if the current one is fully filled.
 
         Args:
-            latest_fill_amount (Decimal): the amount of the bid limit order
-                that has been filled.
+            data_slice (Slice): the lastest data slice.
 
         Returns:
-            (CreateOrder): a ask market order.
+            ([CreateOrder]): a list of order actions to be executed.
         """
+        actions = []
+        order = data_slice.for_exchange(self.exchange_buy_on).order(
+            self._live_limit_action.order_id)
+        self._sanity_check_order(order)
+        latest_fill_amount = Decimal(order['filled'])
+        # TODO: need to insure we don't have any rounding issues here.
+        # If the order is fully filled, set it to None.
+
         fill_diff = latest_fill_amount - self._previous_fill_amount
-        # TODO: What is the minimum amount of bitcoin we should be buying,
-        # or does it not matter?
-        logging.info("The limit buy order ({}) has been filled more (prev "
-                     "fill: {}, current: {}). About to place a market sell "
-                     "order for {} on {}.".format(
-            self._live_limit_action.order_id, self._previous_fill_amount,
-            latest_fill_amount, fill_diff, self.exchange_sell_on))
-        market_ask_action = CreateOrder(self.exchange_sell_on,
-                                        CreateOrder.Side.ASK,
-                                        CreateOrder.Type.MARKET,
-                                        amount=fill_diff)
-        # Store the order action, although I'm not sure if we will need them
-        # again. Maybe for logging.
-        self._market_orders_made.append(market_ask_action)
-        self._previous_fill_amount = latest_fill_amount
-        # TODO: Do we need rounding here?
+        if fill_diff == Decimal(0):
+            logging.info("The limit buy order has not been filled any further.")
+        else:
+            logging.info("The limit buy order ({}) has been filled more (prev "
+                         "fill: {}, current: {}). About to place a market sell "
+                         "order for {} on {}.".format(
+                self._live_limit_action.order_id, self._previous_fill_amount,
+                latest_fill_amount, fill_diff, self.exchange_sell_on))
+            market_ask_action = CreateOrder(self.exchange_sell_on,
+                                            CreateOrder.Side.ASK,
+                                            CreateOrder.Type.MARKET,
+                                            amount=fill_diff)
+            actions.append(market_ask_action)
+            # Store the order action, although I'm not sure if we will need them
+            # again. Maybe for logging.
+            self._market_orders_made.append(market_ask_action)
+            self._previous_fill_amount = latest_fill_amount
         if latest_fill_amount == self.bid_amount_in_btc:
             logging.info("Our buy limit order ({}) on {} has been fully "
-                         "filled.".format(
-                self._live_limit_action.order_id, self.exchange_buy_on))
-            # TODO: might want to double check that the order is finished.
-            self._live_limit_action = None
-            # We can return here, as we know we don't need to update the
-            # limit order, as it is finished.
-        return market_ask_action
+                         "filled.".format(self._live_limit_action.order_id,
+                                          self.exchange_buy_on))
+            bid_order = self._create_bid_limit_order(data_slice)
+            self._live_limit_action = bid_order
+            self._previous_fill_amount = 0
+            actions.append(bid_order)
+        return actions
 
-    def _create_bid_limit_order(self, order_book_of_ask_exchange,
-                                balance_on_bid_exchange):
+    def _create_bid_limit_order(self, data_slice):
         """Create the appropriate bid limit order action.
 
         The bid should be for the self.bid_amount_usd worth of Bitcoin, or
@@ -244,15 +236,17 @@ class OneWayPairArbitrage(trader.Algorithm):
         Returns:
             (CreateOrder): the bid limit order that was created.
         """
+        balance = data_slice.for_exchange(self.exchange_buy_on).balance
+        order_book = data_slice.for_exchange(self.exchange_sell_on).order_book
         sell_price = self._calculate_effective_sell_price(
-            self.bid_amount_in_btc, order_book_of_ask_exchange)
+            self.bid_amount_in_btc, order_book)
         # Calculate the bid price to make the required profit.
         bid_price = self._calculate_bid_limit_price(self.exchange_buy_on,
                                                     self.exchange_sell_on,
                                                     sell_price,
                                                     self.profit_target)
         btc_amount = self.bid_amount_in_btc
-        usd_balance = Decimal(balance_on_bid_exchange['free']['USD'])
+        usd_balance = Decimal(balance['free']['USD'])
 
         # TODO: is it okay to assume that the fees are not on top, and thus they
         # will not cause us to run our balance negative with this calculation?
@@ -267,6 +261,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         bid_action = CreateOrder(self.exchange_buy_on, CreateOrder.Side.BID,
                                  CreateOrder.Type.LIMIT, amount=btc_amount,
                                  price=bid_price)
+        self._last_limit_order_update_at = data_slice.timestamp
         return bid_action
 
     def _sanity_check_order(self, order):

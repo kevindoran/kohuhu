@@ -3,6 +3,7 @@ from kohuhu.arbitrage import OneWayPairArbitrage
 import kohuhu.trader as trader
 from kohuhu.trader import CreateOrder
 import decimal
+import kohuhu.currency as currency
 from decimal import Decimal
 
 
@@ -70,18 +71,19 @@ def exch_2_order_book_data(empty_data):
     one_million = 1000000
     full_balance = {
         'free': {
-            'BTC': 0.00,
-            'USD': one_million
+            'BTC': Decimal(0.00),
+            'USD': Decimal(one_million)
         }
     }
     td.exch_1_slice.balance = full_balance
     # Assign a bid amount.
-    td.bid_amount = Decimal(1.0)
+    td.bid_amount = Decimal("1.0")
     td.algorithm.bid_amount_in_btc = td.bid_amount
     # Target 10% profit.
-    td.profit_target = Decimal(0.1)
+    td.profit_target = Decimal("0.1")
     td.algorithm.profit_target = td.profit_target
     return td
+
 
 @pytest.fixture
 def state_after_one_bid_order(exch_2_order_book_data):
@@ -139,8 +141,10 @@ def assert_single_market_ask(actions, amount=None):
     assert ask_order_action.side == CreateOrder.Side.ASK
     assert ask_order_action.exchange == ask_on_exchange
     if amount:
-        assert ask_order_action.amount == amount
-
+        # Only compare to about 9 dp (whatever the BasicContext dp limit is).
+            # TODO: figure out how to compare Decimals.
+            rounded = ask_order_action.amount.quantize(Decimal(10)**-10)
+            assert amount == rounded
 
 def test_makes_limit_order(exch_2_order_book_data):
     """Tests that the algorithm makes a limit buy order as it's first action.
@@ -281,3 +285,63 @@ def test_makes_market_order(state_after_one_bid_order):
     # Check
     # An ask market order should be made for the filled amount of the bid order.
     assert_single_market_ask(actions, amount=filled)
+
+
+def fill_limit_bid(order, by_amount):
+    # To makes the numbers easier to read, keep by_amount to 4 dp.
+    three_dp = Decimal("0.0001")
+    rounded = by_amount.quantize(three_dp, decimal.ROUND_DOWN)
+    if by_amount != rounded:
+        raise Exception("When testing, try to keep by_amount to 4 dp.")
+
+    current_fill = Decimal(order['filled'])
+    order_total = Decimal(order['amount'])
+    remaining = Decimal(order['remaining'])
+    # Remaining and filled should add to the total.
+    # Note: is this actually the case in all instances?
+    # This is an error in the testing code, if the assert is false.
+    assert currency.round_to_satoshi(order_total - current_fill - remaining) \
+           == 0
+    # The order can't be filled for more than it's total amount
+    fully_filled =  (current_fill + by_amount) >= order_total
+    order['filled'] = min(order_total, (current_fill + by_amount))
+    order['remaining'] = max(0, (remaining - by_amount))
+    print("Filled: {}, remaining: {}".format(order['filled'], order['remaining']))
+    return fully_filled
+
+
+def test_make_multiple_bids(state_after_one_bid_order):
+    """Tests that the algorithm makes more bids as they are filled.
+
+    This test keeps filling the limit bid orders and making sure that the
+    algorithm makes market asks and limit bids when appropriate.
+    """
+    td = state_after_one_bid_order
+
+    # Start by filling the order by increment.
+    increment = Decimal("0.15")
+    bid_order = td.exch_1_slice.order(td.order_id)
+    is_filled = fill_limit_bid(bid_order, increment)
+
+    for i in range(0,100):
+        # Step the algorithm.
+        td.slice.timestamp += td.algorithm.poll_period
+        actions = td.trader.step()
+        # If we have filled the order, make sure there is both a market order
+        # and a new bid limit order, else there should be just a market order.
+        if is_filled:
+            assert len(actions) == 2
+            bid_action, ask_action = actions
+            if bid_action.side == CreateOrder.Side.ASK:
+                ask_action, bid_action = actions
+            assert_single_limit_bid([bid_action], td.bid_amount)
+            assert_single_market_ask([ask_action])
+            # Reset the order details.
+            bid_action.status = CreateOrder.Status.SUCCESS
+            bid_action.order_id = td.order_id
+            bid_order['filled'] = 0
+            bid_order['remaining'] = td.bid_amount
+        else:
+            assert_single_market_ask(actions, increment)
+
+        is_filled = fill_limit_bid(bid_order, increment)
