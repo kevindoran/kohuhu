@@ -4,6 +4,7 @@ from datetime import datetime
 import asyncio
 from decimal import Decimal
 import logging
+from sortedcontainers import SortedDict
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class Publisher:
     def updated(self, data, timestamp=None):
         self.last_updated_at = timestamp if timestamp else datetime.now()
         for c in self._update_callbacks:
-            c(data)
+            c(data, timestamp)
 
     def add_callback(self, callback):
         self._update_callbacks.add(callback)
@@ -26,6 +27,12 @@ class Publisher:
     def remove_callback(self, callback):
         self._update_callbacks.remove(callback)
 
+
+class BidPricePair:
+    """A price, amount tuple. So we never mix up the order."""
+    def __init__(self, price, amount):
+        self.price = price
+        self.amount = amount
 
 class OrderBook:
     """Represents an order book on an exchange.
@@ -39,31 +46,55 @@ class OrderBook:
             key:value pairs. The first element contains the lowest ask. Both price and
             quantity are Decimals.
     """
-    def __init__(self, timestamp, bids, asks):
-        self.timestamp = timestamp
-        self._bids = bids
-        self._asks = asks
+    def __init__(self):#, timestamp), bids, asks):
+        #self.timestamp = timestamp
+        self._bids = SortedDict()
+        self._asks = SortedDict()
         self.bids_publisher = Publisher()
         self.asks_publisher = Publisher()
         self.any_publisher = Publisher()
 
+    # Note: do we want to use the ordered dict directly, or through methods?
     def set_bids_remaining(self, at_price, remaining):
         self._bids[at_price] = remaining
-        self.bids_publisher.updated(self)
-        self.any_publisher.updated(self)
+        # Don't update subscribers here automatically as:
+        #   a) we may want to bunch multiple changes per update (eg REST)
+        #   b) it is easy to disable the callbacks when testing.
+
+    def set_asks_remainng(self, at_price, remaining):
+        self._asks[at_price] = remaining
 
     def bids_remaining(self, at_price):
         return self._bids[at_price]
 
+    def asks_remaining(self, at_price):
+        return self._asks
+
+    def bid_prices(self):
+        return self._bids.keys()
+
+    def bid_by_index(self, index):
+        price = self._bids.iloc[index]
+        amount = self._bids[price]
+        return BidPricePair(price, amount)
+
+    def asks(self):
+        return self._asks.keys()
+
 
 class Order:
+    """Represents an order placed on an exchange.
+
+    Note: we may wish to separate this class into Order, LimitOrder
+    and MarketOrder.
+    """
+    class Type(Enum):
+        LIMIT = auto()
+        MARKET = auto()
+
     class Side(Enum):
         ASK = auto()
         BID = auto()
-
-    class Type(Enum):
-        MARKET = auto()
-        LIMIT = auto()
 
     class Status(Enum):
         OPEN = auto()
@@ -71,12 +102,14 @@ class Order:
         CANCELLED = auto()
 
     def __init__(self):
-        self.price = None
+        self.order_id = None
+        self.average_price = None
         self.symbol = None
         self.side = None
         self.type = None
         self.amount = None
         self.filled = None
+        self.price = None
         self.remaining = None
         self.status = None
 
@@ -88,10 +121,16 @@ class Balance:
         self._on_hold = {}
 
     def free(self, symbol):
-        pass
+        return self._free.get(symbol, Decimal(0))
 
     def on_hold(self, symbol):
-        pass
+        return self._on_hold.get(symbol, Decimal(0))
+
+    def set_free(self, symbol, amount):
+        self._free[symbol] = amount
+
+    def set_on_hold(self, symbol, amount):
+        self._on_hold[symbol] = amount
 
 
 class ExchangeState:
@@ -103,20 +142,16 @@ class ExchangeState:
     def __init__(self, exchange_id ,fetcher):
         # Lets assume that the order book, personal orders and balance use the
         # ccxt structure.
-        self.exchange = exchange_id
-        self._order_book = None
+        self.exchange_id = exchange_id
+        self._order_book = OrderBook()
         self._orders = {}
-        self._balance = None
+        self._balance = Balance()
         self.fetcher = fetcher
 
     def populate(self):
         self._order_book = None
         self._orders = {}
         self._balance = None
-        if self.always_fetch_order_book:
-            self._order_book = self.fetcher.get_order_book(self.exchange)
-        if self.always_fetch_balance:
-            self._order_book = self.fetcher.get_balance(self.exchange)
 
     def order_book(self, force_update=False):
         """
@@ -145,7 +180,7 @@ class ExchangeState:
     def set_order_book(self, in_order_book):
         self._order_book = in_order_book
 
-    def order(self, order_id, force_update):
+    def order(self, order_id, force_update=False):
         """
         A specific order on the exchange.
 
@@ -172,13 +207,13 @@ class ExchangeState:
         }
         """
         if force_update:
-            self._orders[order_id] = self.fetcher.get_order(self.exchange, order_id)
+            self._orders[order_id] = self.fetcher.get_order(self.exchange_id, order_id)
         return self._orders.get(order_id, None)
 
     def set_order(self, order_id, order_info):
         self._orders[order_id] = order_info
 
-    def balance(self, force_update):
+    def balance(self, force_update=False):
         """Returns the balance on the exchange.
 
         Follows the ccxt structure:
@@ -450,15 +485,15 @@ class Trader:
         self._algorithm = algorithm
         self.timer = Timer()
         self._fetchers = {}
-        self._state = State()
+        self.state = State()
         self.exchanges = exchanges
         self.action_queue = []
         for e in exchanges:
-            self._state.add_exchange(e.state)
+            self.state.add_exchange(e.state)
 
     def initialize(self):
         """Calls initialize on the algorithm."""
-        self._algorithm.initialize(self._state, self.action_queue)
+        self._algorithm.initialize(self.state, self.timer, self.action_queue)
 
     def start(self):
         """Starts the trader.
