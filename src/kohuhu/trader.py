@@ -230,10 +230,13 @@ class State:
         self.timestamp = datetime.now()
 
     def for_exchange(self, exchange_id):
-        return self._exchange_state[exchange_id]
+        return self._exchange_state.get(exchange_id, None)
 
     def add_exchange(self, exchange_state):
         self._exchange_state[exchange_state.exchange_id] = exchange_state
+
+    def exchanges(self):
+        return self._exchange_state.values()
 
 
 class Algorithm:
@@ -248,11 +251,11 @@ class Algorithm:
     def __init__(self):
         pass
 
-    def initialize(self, state, timer):
+    def initialize(self, state, timer, action_queue):
         raise NotImplementedError("Subclasses should implement this method.")
         # timer.do_every(timedelta(seconds=1), self.tick)
 
-    def on_tick(self):
+    def on_tick(self, time_now):
         raise NotImplementedError("Subclasses should implement this method.")
 
 
@@ -421,7 +424,7 @@ class Timer:
         for delta in tick():
             await asyncio.sleep(delta.seconds)
             # await f() ?
-            f()
+            f(datetime.now())
 
 
 class Trader:
@@ -429,13 +432,15 @@ class Trader:
 
     Test code might look like:
     algo = MyAlgo()
-    trader = Trader(algo)
+    gdax = GDaxExchange()
+    gemini = GeminiExchange()
+    exchanges = [gdax, gemini]
+    trader = Trader(algo, exchanges)
     trader.initialize()
-    # create some fake data.
-    trader.add_slice(some_fake_data)
-    trader.step()
+    # Edit the state here...
+    algorithm.on_tick()
+    actions = trader.timer.action_queue.deque()
     # check if actions were correct.
-
 
     Attributes:
         actions: a list of action tuples. Each list entry contains the actions
@@ -443,17 +448,17 @@ class Trader:
     """
     def __init__(self, algorithm, exchanges):
         self._algorithm = algorithm
-        self._timer = Timer()
+        self.timer = Timer()
         self._fetchers = {}
         self._state = State()
         self.exchanges = exchanges
-        self.last_actions = []
+        self.action_queue = []
         for e in exchanges:
             self._state.add_exchange(e.state)
 
     def initialize(self):
         """Calls initialize on the algorithm."""
-        self._algorithm.initialize(self._state, self._timer)
+        self._algorithm.initialize(self._state, self.action_queue)
 
     def start(self):
         """Starts the trader.
@@ -465,7 +470,7 @@ class Trader:
         for e in self.exchanges:
             tasks.append(asyncio.ensure_future(e.initialize()))
             tasks.append(asyncio.ensure_future(e.process_queue()))
-        tasks.extend(self._timer.tasks)
+        tasks.extend(self.timer.tasks)
         loop = asyncio.get_event_loop()
         try:
             # Run the tasks. If everything works well, this will run forever.
@@ -508,31 +513,25 @@ class Trader:
             loop.stop()
             loop.close()
 
+    def add_action(self, action):
+        self.action_queue.append(action)
 
 # Draft area:
 
-class OrderActionSubscriber:
-    """Draft class for receiving granular order events.
+def on_order_success(self, order_action):
+    pass
 
-    When we transition from just having a simple on_data() call for the
-    algorithms, this class will come into use. Algorithms would implement this
-    interface and subscribe to the orders they make for updates.
-    """
+def on_order_accepted(self, order_action):
+    pass
 
-    def on_order_success(self, order_action):
-        pass
+def on_order_rejected(self, order_action):
+    pass
 
-    def on_order_accepted(self, order_action):
-        pass
+def on_order_fill(self, order_action):
+    pass
 
-    def on_order_rejected(self, order_action):
-        pass
+def on_onder_closed(self, order_action):
+    pass
 
-    def on_order_fill(self, order_action):
-        pass
-
-    def on_onder_closed(self, order_action):
-        pass
-
-    def on_order_cancelled(self, order_action):
-        pass
+def on_order_cancelled(self, order_action):
+    pass
