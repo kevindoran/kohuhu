@@ -86,6 +86,9 @@ class Trader:
         """Calls initialize on the algorithm."""
         self._algorithm.initialize(self.state, self._timer, self.action_queue)
 
+    def on_update(self):
+        self._algorithm.on_data()
+
     def start(self):
         """Starts the trader.
 
@@ -95,6 +98,7 @@ class Trader:
         tasks = []
         for e in self.exchanges:
             self.state.add_exchange(e.exchange_state())
+            e.set_on_update_callback(self.on_update)
             tasks_for_exchange = e.initialize()
             tasks.append(tasks_for_exchange)
 

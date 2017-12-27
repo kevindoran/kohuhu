@@ -25,6 +25,10 @@ class GeminiExchange(ExchangeClient):
         # The orders queue contains websocket responses from the private orders
         # websocket feed.
         self._orders_queue = asyncio.Queue()
+        self._on_update_callback = None
+
+    def set_on_change_callback(self, callback):
+        self._on_update_callback = callback
 
 
     def initialize(self):
@@ -73,18 +77,15 @@ class GeminiExchange(ExchangeClient):
     # Note: we can't have a more general method like below, as the notification
     # after update require different signatures for market and order updates.
     async def _process_queue(self, queue, callback):
-        to_notify = set()
         while True:
             message = await queue.get()
             response = json.loads(message)
             if self._process_heartbeat(response):
                 continue
-            publishers = callback(message)
-            to_notify.update(publishers)
+            callback(message)
             if not queue.empty():
                 continue
-            for publisher in to_notify:
-                publisher.notify_subscribers()
+            self._on_update_callback()
 
     def _process_heartbeat(self, response):
         if response['type'] == 'heartbeat':
@@ -108,14 +109,9 @@ class GeminiExchange(ExchangeClient):
             if side == 'bid':
                 self.exchange_state.order_book().set_bids_remaining(price,
                                                                     quantity)
-                to_update = (self.exchange_state.order_book().any_publisher,
-                             self.exchange_state.order_book().bids_publisher)
-                return to_update
             elif side == 'ask':
                 self.exchange_state.order_book().set_asks_remaining(price,
                                                                     quantity)
-                to_update = (self.exchange_state.order_book().any_publisher,
-                             self.exchange_state.order_book().asks_publisher)
             else:
                 raise Exception("Unexpected update side: " + side)
 

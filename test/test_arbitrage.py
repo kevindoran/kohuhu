@@ -60,7 +60,7 @@ class _TestData:
         self.bid_action = None
 
     def step_algorithm(self):
-        self.algorithm.on_tick()
+        self.algorithm.on_data()
         actions = list(self.action_queue.queue)
         self.action_queue.queue.clear()
         return actions
