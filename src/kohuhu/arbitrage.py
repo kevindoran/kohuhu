@@ -76,9 +76,9 @@ class OneWayPairArbitrage(trader.Algorithm):
                 "exchanges were not present in the available exchanges: {}"
                 .format(self.exchange_buy_on, self.exchange_sell_on,
                         ",".join((e for e in state.exchanges()))))
-        timer.do_every(self.poll_period, self.on_tick)
+        #timer.do_every(self.poll_period, self.on_data)
 
-    def on_tick(self, time_now=None):
+    def on_data(self, time_now=None):
         # Create a bid limit action if there is none.
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.

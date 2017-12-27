@@ -254,6 +254,9 @@ class ExchangeClient:
     """Keeps the ExchangeState of an exchange up to date. Also executes actions.
     """
 
+    def set_on_change_callback(self):
+        pass
+
     def exchange_state(self):
         pass
 
