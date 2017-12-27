@@ -12,17 +12,25 @@ log = logging.getLogger(__name__)
 class GeminiExchange(ExchangeClient):
 
     def __init__(self):
-        self.exchange_state = ExchangeState("gdax", self)
-        self._market_data_queue = asyncio.Queue()
-        self._orders_queue = asyncio.Queue()
+        self.exchange_state = ExchangeState("gemini", self)
         self._market_data_url = \
             'wss://api.gemini.com/v1/marketdata/BTCUSD?heartbeat=true'
         self._events_url = \
             'wss://api.gemini.com/v1/orders/events?heartbeat=true'
 
+        # The market data queue contains contains websocket responses from the
+        # public market data websocket feed.
+        self._market_data_queue = asyncio.Queue()
+
+        # The orders queue contains websocket responses from the private orders
+        # websocket feed.
+        self._orders_queue = asyncio.Queue()
+
+
     def initialize(self):
-        orders_receive_task = self.open_market_data_websocket()
-        market_data_receive_task = self.open_orders_websocket()
+        """TODO"""
+        orders_receive_task = self._open_orders_websocket()
+        market_data_receive_task = self._open_market_data_websocket()
         process_orders_task = asyncio.ensure_future(
             self._process_queue(self._orders_queue,
                                 callback=self._handle_orders))
@@ -32,7 +40,8 @@ class GeminiExchange(ExchangeClient):
         return (orders_receive_task, market_data_receive_task,
                 process_orders_task, process_market_data_task)
 
-    async def open_orders_websocket(self):
+    async def _open_orders_websocket(self):
+        """TODO"""
         try:
             async with websockets.connect(self._events_url) as websocket:
                 # Block waiting for a new websocket message.
@@ -46,7 +55,8 @@ class GeminiExchange(ExchangeClient):
             if str(ex.status_code).startswith("5"):
                 self._exchange_offline_callback(message=ex)
 
-    async def open_market_data_websocket(self):
+    async def _open_market_data_websocket(self):
+        """TODO"""
         try:
             async with websockets.connect(self._market_data_url) as websocket:
                 # Block waiting for a new websocket message.
