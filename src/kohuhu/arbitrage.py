@@ -77,9 +77,6 @@ class OneWayPairArbitrage(trader.Algorithm):
                 .format(self.exchange_buy_on, self.exchange_sell_on,
                         ",".join((e for e in state.exchanges()))))
         timer.do_every(self.poll_period, self.on_tick)
-        # Subscribe to bid updates on the exchange we are selling on.
-        self._state.for_exchange(self.exchange_buy_on).order_book() \
-            .bids_publisher.add_callback(self.on_exch_2_order_book_update)
 
     def on_tick(self, time_now=None):
         # Create a bid limit action if there is none.
@@ -114,10 +111,10 @@ class OneWayPairArbitrage(trader.Algorithm):
         # exchange by the fill amount.
         self._process_fill(self._state)
 
-    def on_exch_2_order_book_update(self, order_book):
-        self.update_bid_limit_order(order_book)
+        # FIXME
+        #self.update_bid_limit_order()
 
-    def update_bid_limit_order(self, exch_2_order_book):
+    def update_bid_limit_order(self):
         # If we haven't created a bid limit action, there is nothing to updated.
         if not self._live_limit_action:
             return
@@ -127,13 +124,15 @@ class OneWayPairArbitrage(trader.Algorithm):
         if not self._live_limit_action.order:
             return
 
+        exch_2_order_book = self._state.for_exchange(self.exchange_sell_on)\
+            .order_book()
         new_best_price = self._calculate_effective_sell_price(
             self.bid_amount_in_btc, exch_2_order_book)
         original_price = self._live_limit_action.order.price
         if self._should_cancel_order(original_price, new_best_price,
                                      self.order_update_threshold):
-            self._action_queue.append(CancelOrder(self.exchange_buy_on,
-                                       self._live_limit_action.order.order_id))
+            self._action_queue.put(CancelOrder(self.exchange_buy_on,
+                                   self._live_limit_action.order.order_id))
 
     def _sanity_check_action(self, action):
         # Don't make any market bid orders.

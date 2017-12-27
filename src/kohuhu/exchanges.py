@@ -23,9 +23,6 @@ class OrderBook:
         #self.timestamp = timestamp
         self._bids = SortedDict(operator.neg)
         self._asks = SortedDict()
-        self.bids_publisher = Publisher(self)
-        self.asks_publisher = Publisher(self)
-        self.any_publisher = Publisher(self)
 
     # Note: do we want to use the ordered dict directly, or through methods?
     def set_bids_remaining(self, at_price, remaining):
@@ -272,23 +269,3 @@ class ExchangeClient:
     def execute_action(self, action):
         pass
 
-
-class Publisher:
-    """Calls registered callbacks."""
-
-    def __init__(self, data=None):
-        self._data = data
-        self._update_callbacks = set()
-
-    def notify(self):
-        for c in self._update_callbacks:
-            if self._data:
-                c(id)
-            else:
-                c()
-
-    def add_callback(self, callback):
-        self._update_callbacks.add(callback)
-
-    def remove_callback(self, callback):
-        self._update_callbacks.remove(callback)
