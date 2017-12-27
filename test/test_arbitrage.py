@@ -1,8 +1,9 @@
 import pytest
 from kohuhu.arbitrage import OneWayPairArbitrage
 import kohuhu.trader as trader
-from kohuhu.trader import CreateOrder
-from kohuhu.trader import Order
+from kohuhu.exchanges import CreateOrder
+from kohuhu.exchanges import Order
+from kohuhu.exchanges import ExchangeState
 import decimal
 import kohuhu.currency as currency
 from decimal import Decimal
@@ -76,8 +77,8 @@ def empty_data():
     td.algorithm = OneWayPairArbitrage(bid_on_exchange, ask_on_exchange)
     td.trader = trader.Trader(td.algorithm, [])
     td.state = td.trader.state
-    td.exch_1_state = trader.ExchangeState(bid_on_exchange, fetcher=None)
-    td.exch_2_state = trader.ExchangeState(ask_on_exchange, fetcher=None)
+    td.exch_1_state = ExchangeState(bid_on_exchange, exchange_client=None)
+    td.exch_2_state = ExchangeState(ask_on_exchange, exchange_client=None)
     td.state.add_exchange(td.exch_1_state)
     td.state.add_exchange(td.exch_2_state)
     td.action_queue = Queue()
@@ -371,3 +372,6 @@ def test_make_multiple_bids(state_after_one_bid_order):
         else:
             assert_single_market_ask(actions, increment)
         is_filled = fill_limit_bid(bid_order, increment)
+
+
+# TODO: test_updates_bid_price()

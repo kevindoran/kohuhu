@@ -1,8 +1,8 @@
 import kohuhu.trader as trader
-from kohuhu.trader import CreateOrder
-from kohuhu.trader import CancelOrder
-from kohuhu.trader import Order
-import kohuhu.exchanges as exchanges
+from kohuhu.exchanges import CreateOrder
+from kohuhu.exchanges import CancelOrder
+from kohuhu.exchanges import Order
+import kohuhu.exchanges_old as exchanges
 from decimal import Decimal
 import logging
 import datetime
@@ -69,7 +69,6 @@ class OneWayPairArbitrage(trader.Algorithm):
     def initialize(self, state, timer, action_queue):
         self._state = state
         self._action_queue = action_queue
-        timer.do_every(self.poll_period, self.on_tick)
         if not state.for_exchange(self.exchange_buy_on) or \
            not state.for_exchange(self.exchange_sell_on):
             raise Exception(
@@ -77,6 +76,10 @@ class OneWayPairArbitrage(trader.Algorithm):
                 "exchanges were not present in the available exchanges: {}"
                 .format(self.exchange_buy_on, self.exchange_sell_on,
                         ",".join((e for e in state.exchanges()))))
+        timer.do_every(self.poll_period, self.on_tick)
+        # Subscribe to bid updates on the exchange we are selling on.
+        self._state.for_exchange(self.exchange_buy_on).order_book() \
+            .bids_publisher.add_callback(self.on_exch_2_order_book_update)
 
     def on_tick(self, time_now=None):
         # Create a bid limit action if there is none.
@@ -111,7 +114,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         # exchange by the fill amount.
         self._process_fill(self._state)
 
-    def on_exch_2_order_book_update(self, order_book, timestamp):
+    def on_exch_2_order_book_update(self, order_book):
         self.update_bid_limit_order(order_book)
 
     def update_bid_limit_order(self, exch_2_order_book):
