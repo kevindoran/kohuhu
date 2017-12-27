@@ -136,55 +136,13 @@ class ExchangeState:
         self.exchange_client = exchange_client
 
     def order_book(self, force_update=False):
-        """
-        The order book for the exchange.
-
-        Example order book:
-        {
-            'bids': [
-                [ price, amount ],
-                [ price, amount ],
-                ...
-            ],
-            'asks': [
-                [ price, amount ],
-                [ price, amount ],
-                ...
-            ],
-            'timestamp': 1499280391811, // Unix Timestamp in milliseconds (seconds * 1000)
-            'datetime': '2017-07-05T18:47:14.692Z', // ISO8601 datetime string with milliseconds
-        }
-        """
+        """The order book for the exchange."""
         if force_update:
             self.exchange_client.update_order_book()
         return self._order_book
 
     def order(self, order_id, force_update=False):
-        """
-        A specific order on the exchange.
-
-        Assuming we go with the ccxt data structure. The return type is a dict,
-        and it looks like:
-        {
-           'id':        '12345-67890:09876/54321', // string
-           'datetime':  '2017-08-17 12:42:48.000', // ISO8601 datetime with ms
-           'timestamp':  1502962946216, // Unix timestamp in milliseconds
-           'status':    'open',         // 'open', 'closed', 'canceled'
-           'symbol':    'ETH/BTC',      // symbol
-           'type':      'limit',        // 'market', 'limit'
-           'side':      'buy',          // 'buy', 'sell'
-           'price':      0.06917684,    // float price in quote currency
-           'amount':     1.5,           // ordered amount of base currency
-           'filled':     1.0,           // filled amount of base currency
-           'remaining':  0.5,           // remaining amount to fill
-           'trades':   [ ... ],         // a list of order trades/executions
-           'fee':      {                // fee info, if available
-               'currency': 'BTC',       // which currency the fee is (usually quote)
-               'cost': 0.0009,          // the fee amount in that currency
-           },
-           'info':     { ... },         // original unparsed order structure
-        }
-        """
+        """A specific order on the exchange. """
         if force_update:
             self.exchange_client.update_order(self.exchange_id, order_id)
         return self._orders.get(order_id, None)
@@ -193,36 +151,7 @@ class ExchangeState:
         self._orders[order_id] = order_info
 
     def balance(self, force_update=False):
-        """Returns the balance on the exchange.
-
-        Follows the ccxt structure:
-
-        {
-            'info':  { ... },    // the original untouched non-parsed reply with details
-            //-------------------------------------------------------------------------
-            // indexed by availability of funds first, then by currency
-            'free':  {           // money, available for trading, by currency
-                'BTC': 321.00,   // floats...
-                'USD': 123.00,
-                ...
-            },
-            'used':  { ... },    // money on hold, locked, frozen, or pending, by currency
-            'total': { ... },    // total (free + used), by currency
-            //-------------------------------------------------------------------------
-            // indexed by currency first, then by availability of funds
-            'BTC':   {           // string, three-letter currency code, uppercase
-                'free': 321.00   // float, money available for trading
-                'used': 234.00,  // float, money on hold, locked, frozen or pending
-                'total': 555.00, // float, total balance (free + used)
-            },
-            'USD':   {           // ...
-                'free': 123.00   // ...
-                'used': 456.00,
-                'total': 579.00,
-            },
-            ...
-        }
-        """
+        """Returns the balance on the exchange."""
         if force_update:
             self.exchange_client.update_balance()
         return self._balance
@@ -325,6 +254,8 @@ class CancelOrder(Action):
 
 
 class ExchangeClient:
+    """Keeps the ExchangeState of an exchange up to date. Also executes actions.
+    """
 
     def exchange_state(self):
         pass

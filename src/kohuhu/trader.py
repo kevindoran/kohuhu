@@ -7,21 +7,21 @@ from kohuhu.exchanges import State
 
 log = logging.getLogger(__name__)
 
+
 class Algorithm:
     """Subclass Algorithm and pass it to Trader to make trades.
 
     In order to have flexibility to test any Algorithm subclass, it is
     important that this class doesn't make any direct request for data or
-    to carry out any actions. This class should take data from the data slices
-    and return actions. This allows testing code to run the algorithm on fake
-    data and to check the behaviour of the actions without having them run.
+    to carry out any actions. This class is given data and should return
+    actions. This allows testing code to run the algorithm on fake data and to
+    check the behaviour of the actions without having them run.
     """
     def __init__(self):
         pass
 
     def initialize(self, state, timer, action_queue):
         raise NotImplementedError("Subclasses should implement this method.")
-        # timer.do_every(timedelta(seconds=1), self.tick)
 
 
 class Timer:
@@ -73,25 +73,18 @@ class Trader:
     algorithm.on_tick()
     actions = trader.timer.action_queue.deque()
     # check if actions were correct.
-
-
-    Attributes:
-        actions: a list of action tuples. Each list entry contains the actions
-            that were created by the algorithm at a certain step.
     """
     def __init__(self, algorithm, exchanges):
-        self._algorithm = algorithm
-        self.timer = Timer()
-        self._fetchers = {}
         self.state = State()
         self.exchanges = exchanges
         self.action_queue = []
-        for e in exchanges:
-            self.state.add_exchange(e.state)
+        self._algorithm = algorithm
+        self._timer = Timer()
+        self._fetchers = {}
 
     def initialize(self):
         """Calls initialize on the algorithm."""
-        self._algorithm.initialize(self.state, self.timer, self.action_queue)
+        self._algorithm.initialize(self.state, self._timer, self.action_queue)
 
     def start(self):
         """Starts the trader.
@@ -105,7 +98,7 @@ class Trader:
             tasks_for_exchange = e.initialize()
             tasks.append(tasks_for_exchange)
 
-        tasks.extend(self.timer.tasks)
+        tasks.extend(self._timer.tasks)
         loop = asyncio.get_event_loop()
         try:
             # Run the tasks. If everything works well, this will run forever.

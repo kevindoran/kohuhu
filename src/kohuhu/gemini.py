@@ -9,7 +9,7 @@ from decimal import Decimal
 log = logging.getLogger(__name__)
 
 
-class GdaxExchange(ExchangeClient):
+class GeminiExchange(ExchangeClient):
 
     def __init__(self):
         self.exchange_state = ExchangeState("gdax", self)
