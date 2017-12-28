@@ -313,13 +313,13 @@ class GeminiExchange(ExchangeClient):
             order_response = self.OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._orders[new_order.order_id] = new_order
+            self.exchange_state.set_order(new_order.order_id, new_order)
             return
         elif response_type == "accepted":
             order_response = self.OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._orders[new_order.order_id] = new_order
+            self.exchange_state.set_order(new_order.order_id, new_order)
             for a in self._actions:
                 if id(a) == order_response.client_order_id:
                     if a.order is not None:
@@ -337,7 +337,7 @@ class GeminiExchange(ExchangeClient):
             log.warning(f"An order was rejected. Reason: " + response['reason'])
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._orders[new_order.order_id] = new_order
+            self.exchange_state.set_order(new_order.order_id, new_order)
             for a in self._orders:
                 if id(a) == order_response.client_order_id:
                     if a.order is not None:
