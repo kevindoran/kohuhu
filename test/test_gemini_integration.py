@@ -9,7 +9,7 @@ from decimal import Decimal
 
 credentials.load_credentials()
 
-use_proxy = True
+use_proxy = False
 if use_proxy:
     os.environ["HTTP_PROXY"] = "http://127.0.0.1:8080"
     os.environ["HTTPS_PROXY"] = "https://127.0.0.1:8080"
@@ -56,6 +56,7 @@ async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
         if (datetime.datetime.now() - start_time) > max_wait:
             assert False
 
+@pytest.mark.skip(reason="FIXME: get tests working with async loops.")
 def test_market_buy(event_loop):
     gemini = GeminiExchange(sandbox=True)
     tasks = gemini.initialize()
