@@ -267,8 +267,8 @@ class CancelOrder(Action):
 class ExchangeClient:
     """Keeps the ExchangeState of an exchange up to date. Also executes actions.
     """
-    def initialize(self):
-        """Creates and returns all tasks to be run in the async loop."""
+    def coroutines(self):
+        """Creates and returns all coroutines to be run in the async loop."""
         return NotImplementedError("Subclasses must implement this function.")
 
     def set_on_change_callback(self, callback):

@@ -105,8 +105,9 @@ class Trader:
         for e in self.exchanges:
             self.state.add_exchange(e.exchange_state())
             #e.set_on_update_callback(self.on_update)
-            tasks_for_exchange = e.initialize()
-            self._tasks.extend(tasks_for_exchange)
+            coroutines_for_exchange = e.initialize()
+            for c in coroutines_for_exchange:
+                self._tasks.append(asyncio.ensure_future(c))
 
         self._tasks.extend(self._timer.tasks)
         self._loop = asyncio.get_event_loop()

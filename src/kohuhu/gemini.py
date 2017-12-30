@@ -233,20 +233,19 @@ class GeminiExchange(ExchangeClient):
     def set_on_change_callback(self, callback):
         self._on_update_callback = callback
 
-    def initialize(self):
-        orders_receive_task = self._open_orders_websocket()
-        market_data_receive_task = self._open_market_data_websocket()
-        process_orders_task = asyncio.ensure_future(
-            self._process_queue(self._orders_queue,
+    def coroutines(self):
+        """Returns all the co-routines to be run in an event loop."""
+        orders_receive_coro = self._open_orders_websocket()
+        market_data_receive_coro = self._open_market_data_websocket()
+        process_orders_coro = self._process_queue(self._orders_queue,
                                 callback=self._handle_orders,
-                                socket_info=self._orders_sock_info))
-        process_market_data_task = asyncio.ensure_future(
-            self._process_queue(self._market_data_queue,
+                                socket_info=self._orders_sock_info)
+        process_market_data_coro = self._process_queue(self._market_data_queue,
                                 callback=self._handle_market_data,
                                 socket_info=self._market_data_sock_info,
-                                has_heartbeat_seq=False))
-        return (orders_receive_task, market_data_receive_task,
-                process_orders_task, process_market_data_task)
+                                has_heartbeat_seq=False)
+        return (orders_receive_coro, market_data_receive_coro,
+                process_orders_coro, process_market_data_coro)
 
 
     def _create_headers(self, path, parameters=None):
@@ -303,7 +302,6 @@ class GeminiExchange(ExchangeClient):
         market_data_url = self._wss_url_base + \
                           '/v1/marketdata/BTCUSD?heartbeat=true'
         try:
-            print("_open_market_data")
             async with websockets.connect(market_data_url) as websocket:
                 # Block waiting for a new websocket message.
                 async for message in websocket:
@@ -323,8 +321,9 @@ class GeminiExchange(ExchangeClient):
         while True:
             message = await queue.get()
             response = json.loads(message)
-            if has_heartbeat_seq and response['type'] == 'heartbeat':
-                self._process_heartbeat(response, socket_info)
+            if response['type'] == 'heartbeat':
+                if has_heartbeat_seq:
+                    self._process_heartbeat(response, socket_info)
                 continue
             self._check_sequence(response, socket_info)
             callback(response)
@@ -381,13 +380,12 @@ class GeminiExchange(ExchangeClient):
         socket_info.heartbeat_seq += 1
         socket_info.heartbeat_timestamp_ms = timestamp_ms
 
+
     def _handle_market_data(self, response):
-        if response != 'update':
+        if response['type'] != 'update':
             err_msg = f"Got unexpected response: {response['type']}"
             logging.info(err_msg)
             return
-
-        print("*", end="", flush=True)
         events = response['events']
         # Only iterate over change events.
         for event in (e for e in events if e['type'] == 'change'):
@@ -402,7 +400,6 @@ class GeminiExchange(ExchangeClient):
                                                                     quantity)
             else:
                 raise Exception("Unexpected update side: " + side)
-            self._on_update_callback()
 
     def _handle_orders(self, response):
         response_type = response['type']
@@ -559,7 +556,7 @@ class GeminiExchange(ExchangeClient):
     def _new_order_parameters(self, create_order_action):
         # TODO: only one of these is needed.
         parameters = {}
-        parameters['client_order_id'] = id(create_order_action)
+        parameters['client_order_id'] = str(id(create_order_action))
         parameters['amount'] = str(create_order_action.amount)
         parameters['symbol'] = "btcusd"
         parameters['side'] = 'buy' if create_order_action.side == \
@@ -570,9 +567,12 @@ class GeminiExchange(ExchangeClient):
         if create_order_action.type == exchanges.Order.Type.MARKET:
             parameters['options'] = ["immediate-or-cancel"]
             # TODO: there is an opportunity to provide extra safety.
-            #if create_order_action.side == exchanges.Order.Side.BID:
-            #    parameters['price'] =
-            # parameters['price'] =
+            temp_max_price = "1000000" # $1 million
+            temp_min_price = "0"
+            if create_order_action.side == exchanges.Order.Side.BID:
+                parameters['price'] = temp_max_price
+            else:
+             parameters['price'] = temp_min_price
         else:
             parameters['price'] = str(create_order_action.price)
         return parameters
@@ -590,11 +590,12 @@ class GeminiExchange(ExchangeClient):
         """
         if not parameters:
             parameters = None
-        headers = self._create_headers(path, parameters)
         url = self._rest_url_base + path
         success = False
         response = None
         for i in range(0, self.request_retry_limit):
+            # Create the headers each time, as we need an updated nonce.
+            headers = self._create_headers(path, parameters)
             response = requests.post(url, headers=headers)
             if response.status_code == requests.codes.ok:
                 success = True
