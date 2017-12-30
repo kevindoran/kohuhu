@@ -74,20 +74,27 @@ class Trader:
     actions = trader.timer.action_queue.deque()
     # check if actions were correct.
     """
-    def __init__(self, algorithm, exchanges):
+    def __init__(self, algorithm=None, exchanges=None):
+        if not exchanges:
+            exchanges = []
         self.state = State()
         self.exchanges = exchanges
         self.action_queue = []
         self._algorithm = algorithm
         self._timer = Timer()
         self._fetchers = {}
+        self._loop = None
+        self._tasks = []
 
     def initialize(self):
         """Calls initialize on the algorithm."""
-        self._algorithm.initialize(self.state, self._timer, self.action_queue)
+        if self._algorithm:
+            self._algorithm.initialize(self.state, self._timer,
+                                       self.action_queue)
 
     def on_update(self):
-        self._algorithm.on_data()
+        if self._algorithm:
+            self._algorithm.on_data()
 
     def start(self):
         """Starts the trader.
@@ -95,19 +102,18 @@ class Trader:
         When testing, this method doesn't need to be called, and the data can be
         set directly.
         """
-        tasks = []
         for e in self.exchanges:
             self.state.add_exchange(e.exchange_state())
-            e.set_on_update_callback(self.on_update)
+            #e.set_on_update_callback(self.on_update)
             tasks_for_exchange = e.initialize()
-            tasks.append(tasks_for_exchange)
+            self._tasks.extend(tasks_for_exchange)
 
-        tasks.extend(self._timer.tasks)
-        loop = asyncio.get_event_loop()
+        self._tasks.extend(self._timer.tasks)
+        self._loop = asyncio.get_event_loop()
         try:
             # Run the tasks. If everything works well, this will run forever.
-            finished, pending = loop.run_until_complete(
-            asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION))
+            finished, pending = self._loop.run_until_complete(
+            asyncio.wait(self._tasks, return_when=asyncio.FIRST_EXCEPTION))
 
             # If we've got here, then a task has throw an exception.
 
@@ -125,7 +131,7 @@ class Trader:
 
             # Wait for up to 2 seconds for the tasks to gracefully return.
             finished_cancelled_tasks, pending_cancelled_tasks = \
-                loop.run_until_complete(asyncio.wait(pending, timeout=2))
+                self._loop.run_until_complete(asyncio.wait(pending, timeout=2))
             try:
                 # They most likely finished because we told them to cancel, when
                 # we observe them we'll catch the asyncio.CancelledError.
@@ -142,8 +148,17 @@ class Trader:
                 # CancelledError then t.result() will raise a CancelledError.
                 # This is fine.
         finally:
-            loop.stop()
-            loop.close()
+            self._loop.stop()
+            self._loop.close()
+
 
     def add_action(self, action):
         self.action_queue.append(action)
+
+
+if __name__ == "__main__":
+    from kohuhu.gemini import GeminiExchange
+    import kohuhu.credentials as credentials
+    credentials.load_credentials()
+    trader = Trader(algorithm=None, exchanges=[GeminiExchange(sandbox=True)])
+    trader.start()

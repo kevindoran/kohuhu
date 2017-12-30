@@ -15,6 +15,7 @@ import json
 import hmac
 from hashlib import sha384
 import kohuhu.credentials as credentials
+import requests
 
 from decimal import Decimal
 
@@ -85,6 +86,7 @@ class OrderResponse:
         self.total_spend = None
 
     def update_order(self, order):
+        """Update the order object with the information from this response."""
         order.order_id = self.order_id
         order.average_price = self.avg_execution_price
         order.symbol = self.symbol
@@ -104,6 +106,7 @@ class OrderResponse:
 
     @classmethod
     def from_json_dict(cls, json_dict):
+        """Create an OrderResponse from a dict representation of JSON."""
         response = cls()
         # type
         response.type = cls.Type[json_dict['type'].upper()]
@@ -175,19 +178,36 @@ class OrderResponse:
 class GeminiExchange(ExchangeClient):
 
     class SocketInfo:
+        """State associated with a websocket.
+
+        Attributes:
+            heartbeat_seq (int): the next expected heartbeat sequence number.
+            seq (int): the next expected socket sequence number.
+            heartbeat_timestamp_ms (int): the timestamp in milliseconds at which
+                the last heartbeat was received.
+        """
         def __init__(self):
             self.heartbeat_seq = 0
             self.seq = 0
             self.heartbeat_timestamp_ms = None
 
-    def __init__(self):
-        self._exchange_state = ExchangeState("gemini", self)
-        self._market_data_path = '/v1/marketdata/BTCUSD'
-        self._orders_path = '/v1/orders/events'
-        self._market_data_url = \
-            'wss://api.gemini.com/v1/marketdata/BTCUSD?heartbeat=true'
-        self._order_events_url = \
-            'wss://api.gemini.com/v1/orders/events?heartbeat=true'
+    standard_exchange_name = "gemini"
+    sandbox_exchange_name = "gemini_sandbox"
+    standard_rest_url_base = "https://api.gemini.com"
+    sandbox_rest_url_base = "https://api.sandbox.gemini.com"
+    standard_wss_url_base = "wss://api.gemini.com"
+    sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
+
+    def __init__(self, sandbox=False):
+        self.request_retry_limit = 4
+
+        self.exchange_name = self.sandbox_exchange_name if sandbox \
+            else self.standard_exchange_name
+        self._rest_url_base = self.sandbox_rest_url_base if sandbox \
+            else self.standard_rest_url_base
+        self._wss_url_base = self.sandbox_wss_url_base if sandbox \
+            else self.standard_wss_url_base
+        self._exchange_state = ExchangeState(self.exchange_name, self)
         self._actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
@@ -203,6 +223,13 @@ class GeminiExchange(ExchangeClient):
         self._orders_queue = asyncio.Queue()
         self._on_update_callback = None
 
+    def _nonce(self):
+        # Note: if we use multithreading for a single exchange, this may
+        # cause an issue.
+        delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
+        return delta.total_seconds() * 1000
+
+
     def set_on_change_callback(self, callback):
         self._on_update_callback = callback
 
@@ -216,34 +243,49 @@ class GeminiExchange(ExchangeClient):
         process_market_data_task = asyncio.ensure_future(
             self._process_queue(self._market_data_queue,
                                 callback=self._handle_market_data,
-                                socket_info=self._market_data_sock_info))
+                                socket_info=self._market_data_sock_info,
+                                has_heartbeat_seq=False))
         return (orders_receive_task, market_data_receive_task,
                 process_orders_task, process_market_data_task)
 
+
+    def _create_headers(self, path, parameters=None):
+        if parameters is None:
+            parameters = dict()
+        payload = {
+            'request': path,
+            'nonce': self._nonce()
+        }
+        payload.update(parameters)
+        encoded_payload = base64.b64encode(json.dumps(payload,
+                                                      separators=(',', ':'))
+                                           .encode('ascii'))
+        creds = credentials.credentials_for(self.exchange_name)
+
+        # TODO: double check this is the correct way of generating the signature.
+        signature = hmac.new(creds.api_secret.encode('ascii'), encoded_payload,
+                             sha384).hexdigest()
+
+        headers = {
+            # I think these two headers are set by default.
+            #'Content-Type': 'text/plain',
+            #'Content-Length': 0,
+            'X-GEMINI-PAYLOAD': encoded_payload,
+            'X-GEMINI-APIKEY': creds.api_key,
+            'X-GEMINI-SIGNATURE': signature
+        }
+        return headers
+
     async def _open_orders_websocket(self):
         try:
-            # Prepare headers.
-            payload = base64.b64encode(json.dumps({
-                'request': self._orders_path,
-                'nonce': encryption.generate_nonce()
-            }, separators=(',', ':')))
-
-            creds = credentials.credentials_for("gemini")
-
-            # TODO: double check this is the correct way of generating the signature.
-            signature = hmac.new(creds.api_secret, payload, sha384).hexdigest()
-
-            headers = {
-                f'X-GEMINI-PAYLOAD: {payload}',
-                f'X-GEMINI-APIKEY:{creds.api_key}',
-                f'X-GEMINI-SIGNATURE:{signature}'
-            }
-
+            orders_path = '/v1/orders/events'
+            headers = self._create_headers(orders_path)
             # Filter order events so that only events from this key are sent.
-            url = self._order_events_url
-            url += f"apiSessionFilter={creds.api_key}"
-            async with websockets.connect(url, extra_headers=headers) \
-                    as websocket:
+            creds = credentials.credentials_for(self.exchange_name)
+            order_events_url = self._wss_url_base + '/v1/orders/events?' \
+                              f'heartbeat=true&apiSessionFilter={creds.api_key}'
+            async with websockets.connect(order_events_url,
+                                          extra_headers=headers) as websocket:
                 # Block waiting for a new websocket message.
                 async for message in websocket:
                     if self._orders_queue.qsize() >= 100:
@@ -258,8 +300,11 @@ class GeminiExchange(ExchangeClient):
                 pass
 
     async def _open_market_data_websocket(self):
+        market_data_url = self._wss_url_base + \
+                          '/v1/marketdata/BTCUSD?heartbeat=true'
         try:
-            async with websockets.connect(self._market_data_url) as websocket:
+            print("_open_market_data")
+            async with websockets.connect(market_data_url) as websocket:
                 # Block waiting for a new websocket message.
                 async for message in websocket:
                     if self._market_data_queue.qsize() >= 100:
@@ -273,18 +318,20 @@ class GeminiExchange(ExchangeClient):
                 #self._exchange_offline_callback(message=ex)
                 pass
 
-    async def _process_queue(self, queue, callback, socket_info):
+    async def _process_queue(self, queue, callback, socket_info,
+                             has_heartbeat_seq=True):
         while True:
             message = await queue.get()
             response = json.loads(message)
-            if response['type'] == 'heartbeat':
+            if has_heartbeat_seq and response['type'] == 'heartbeat':
                 self._process_heartbeat(response, socket_info)
                 continue
             self._check_sequence(response, socket_info)
-            callback(message)
+            callback(response)
             if not queue.empty():
                 continue
-            self._on_update_callback()
+            if self._on_update_callback:
+                self._on_update_callback()
 
     @staticmethod
     def _check_sequence(response, socket_info):
@@ -335,11 +382,10 @@ class GeminiExchange(ExchangeClient):
         socket_info.heartbeat_timestamp_ms = timestamp_ms
 
     def _handle_market_data(self, response):
-        if response['type'] != 'update':
-            raise Exception()
         if response != 'update':
-            err_msg = f"Got unexpected response: {type}"
-            raise Exception(err_msg)
+            err_msg = f"Got unexpected response: {response['type']}"
+            logging.info(err_msg)
+            return
 
         print("*", end="", flush=True)
         events = response['events']
@@ -375,7 +421,8 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("1 session filter should have been registered."
                                 f"{len(api_session_filter)} were registered.")
             accepted_key = api_session_filter[0]
-            if accepted_key != credentials.credentials_for("gemini").api_key:
+            if accepted_key != credentials.credentials_for(self.exchange_name)\
+                    .api_key:
                 raise Exception("The whitelisted api session key does not "
                                 "match our session key.")
         elif response_type == "initial":
@@ -484,20 +531,105 @@ class GeminiExchange(ExchangeClient):
         else:
             raise Exception(f"Unexpected response type: {response_type}.")
 
-    def _place_order(self):
-        raise NotImplementedError()
-
     def exchange_state(self):
         return self._exchange_state
 
-    def update_order_book(self):
-        raise NotImplementedError()
-
-    def update_balance(self):
-        raise NotImplementedError()
-
-    def update_orders(self):
-        raise NotImplementedError()
 
     def execute_action(self, action):
-        raise NotImplementedError()
+        if action.exchange != self.exchange_name:
+            raise Exception(f"An action for exchange '{action.exchange}' was "
+                            "given to GeminiExchange.")
+        if type(action) == exchanges.CreateOrder:
+            new_order_path = "/v1/order/new"
+            params = self._new_order_parameters(action)
+            self._post_http_request(new_order_path, params)
+        elif type(action) == exchanges.CancelOrder:
+            cancel_order_path = "v1/order/cancel"
+            params = self._cancel_order_parameters(action)
+            self._post_http_request(cancel_order_path, params)
+
+
+    def _cancel_order_parameters(self, cancel_order_action):
+        parameters = {
+            'order_id': cancel_order_action.order_id
+        }
+        return parameters
+
+
+    def _new_order_parameters(self, create_order_action):
+        # TODO: only one of these is needed.
+        parameters = {}
+        parameters['client_order_id'] = id(create_order_action)
+        parameters['amount'] = str(create_order_action.amount)
+        parameters['symbol'] = "btcusd"
+        parameters['side'] = 'buy' if create_order_action.side == \
+            exchanges.Order.Side.BID else 'sell'
+        # The only supported type is a limit order.
+        parameters['type'] = 'exchange limit'
+        # A market order needs to be carried out as a limit order.
+        if create_order_action.type == exchanges.Order.Type.MARKET:
+            parameters['options'] = ["immediate-or-cancel"]
+            # TODO: there is an opportunity to provide extra safety.
+            #if create_order_action.side == exchanges.Order.Side.BID:
+            #    parameters['price'] =
+            # parameters['price'] =
+        else:
+            parameters['price'] = str(create_order_action.price)
+        return parameters
+
+
+    def _post_http_request(self, path, parameters=None):
+        """Sends a POST to the Gemini API.
+
+        Attributes:
+            path (str): the API path to post to (e.g. /v1/orders/new).
+            parameters (dict): a dictionary of parameters to be encoded into
+                the payload header.
+        Returns:
+            (response): the response (from the requests package).
+        """
+        if not parameters:
+            parameters = None
+        headers = self._create_headers(path, parameters)
+        url = self._rest_url_base + path
+        success = False
+        response = None
+        for i in range(0, self.request_retry_limit):
+            response = requests.post(url, headers=headers)
+            if response.status_code == requests.codes.ok:
+                success = True
+                break
+        if not success:
+            raise Exception("Failed to POST a request after "
+                            f"{self.request_retry_limit} attempts. \n"
+                            f"URL: {url}. \n"
+                            f"Parameters: {str(parameters)}")
+        return response
+
+
+    def update_order_book(self):
+        # The order book is kept up to date automatically.
+        pass
+
+    def update_balance(self):
+        check_balance_path = "/v1/balances"
+        r = self._post_http_request(check_balance_path)
+        self._update_balance_from_response(r.json())
+
+    def _update_balance_from_response(self, json_response):
+        for balance in json_response:
+            currency = balance['currency']
+            amount = Decimal(balance['amount'])
+            available = Decimal(balance['available'])
+            # Unused:
+            # availableForWithdrawl = Decimal(balance['availableForWithdrawl'])
+
+            free = available
+            on_hold = amount - available
+            self._exchange_state.balance().set_free(currency, free)
+            self._exchange_state.balance().set_on_hold(currency, on_hold)
+
+
+    def update_orders(self):
+        # The orders are updated automatically.
+        pass

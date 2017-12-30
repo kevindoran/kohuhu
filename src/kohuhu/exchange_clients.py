@@ -8,6 +8,7 @@ import operator
 from decimal import Decimal
 import logging
 
+
 log = logging.getLogger(__name__)
 
 

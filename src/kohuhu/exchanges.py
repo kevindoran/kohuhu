@@ -104,16 +104,28 @@ class Balance:
         self._free = {}
         self._on_hold = {}
 
+    def _check_symbol(self, symbol):
+        if symbol.upper() != symbol:
+            logging.warning("The currency symbols should be upper-case. "
+                            f"Invalid symbol: '{symbol}' given. Switching it "
+                            "to upper-case.")
+        return symbol.upper()
+
+
     def free(self, symbol):
+        symbol = self._check_symbol(symbol)
         return self._free.get(symbol, Decimal(0))
 
     def on_hold(self, symbol):
+        symbol = self._check_symbol(symbol)
         return self._on_hold.get(symbol, Decimal(0))
 
     def set_free(self, symbol, amount):
+        symbol = self._check_symbol(symbol)
         self._free[symbol] = amount
 
     def set_on_hold(self, symbol, amount):
+        symbol = self._check_symbol(symbol)
         self._on_hold[symbol] = amount
 
 

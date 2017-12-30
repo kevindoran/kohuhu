@@ -75,7 +75,7 @@ def empty_data():
     """
     td = _TestData()
     td.algorithm = OneWayPairArbitrage(bid_on_exchange, ask_on_exchange)
-    td.trader = trader.Trader(td.algorithm, [])
+    td.trader = trader.Trader(td.algorithm)
     td.state = td.trader.state
     td.exch_1_state = ExchangeState(bid_on_exchange, exchange_client=None)
     td.exch_2_state = ExchangeState(ask_on_exchange, exchange_client=None)
