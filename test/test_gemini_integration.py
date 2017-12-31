@@ -7,6 +7,12 @@ import os
 import kohuhu.credentials as credentials
 from decimal import Decimal
 
+
+import logging
+# TODO: is there a way to do this from the command line?
+# When something fails, something is spamming the INFO log.
+logging.disable(logging.WARNING)
+
 credentials.load_credentials()
 
 use_proxy = True
@@ -27,20 +33,36 @@ def sandbox_exchange():
 # Uncomment the following to use the default event loop in tests.
 # The default event loop might be needed if tasks are created from code other
 # than the test code.
-#@pytest.yield_fixture()
-#def event_loop():
-#    """Yield the default event loop."""
-#    loop = asyncio.get_event_loop()
-#    yield loop
-#    loop.close()
+@pytest.yield_fixture()
+def event_loop():
+    """Yield the default event loop."""
+    loop = asyncio.get_event_loop()
+    loop.set_debug(False)
+    yield loop
+    loop.close()
 
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
     gemini = GeminiExchange(sandbox=True)
     coroutines = gemini.coroutines()
+    tasks = []
     for c in coroutines:
-        asyncio.ensure_future(c, loop=event_loop)
-    return gemini
+        t = asyncio.ensure_future(c, loop=event_loop)
+        tasks.append(t)
+    yield gemini
+    print("Loop running? {}".format(event_loop.is_running()))
+    #fin_cancelled, pending_cancelled = event_loop.run_until_complete(
+    #   asyncio.wait(tasks, timeout=2))
+    try:
+        for t in tasks:
+            t.cancel()
+        # FIXME: This doesn't really close things down properly. stop() doesn't
+        # work and then we get an exception on close().
+        await asyncio.sleep(1)
+        event_loop.stop()
+        event_loop.close()
+    except Exception:
+        pass
 
 
 def test_get_balance(sandbox_exchange):
@@ -58,29 +80,33 @@ async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
     while not test():
         await asyncio.sleep(0.5)
         if (datetime.datetime.now() - start_time) > max_wait:
-            assert False
+            return False
+    return True
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Haven't figured out why our orders aren't being "
-                         "updated.")
+#@pytest.mark.skip(reason="Haven't figured out why our orders aren't being "
+#                         "updated.")
 async def test_market_buy(live_sandbox_exchange):
     gemini = live_sandbox_exchange
     exchange_state = gemini.exchange_state()
-    await wait_until(lambda: len(exchange_state.order_book().asks()))
+    success = await wait_until(lambda: len(exchange_state.order_book().asks()))
+    assert success
     lowest_ask = exchange_state.order_book().asks()[0]
     ask_amount = exchange_state.order_book().asks_remaining(lowest_ask)
     # Lets make a market bid at this price.
-    bid_amount = Decimal(min(Decimal("0.0001"), ask_amount))
+    # Make the bid small so we don't use up all our funds.
+    bid_amount = Decimal(min(Decimal("0.000001"), ask_amount))
     bid_action = exchanges.CreateOrder("gemini_sandbox",
                                        exchanges.Order.Side.BID,
                                        exchanges.Order.Type.MARKET,
                                        amount=bid_amount)
     gemini.execute_action(bid_action)
-    await wait_until(lambda: len(exchange_state._orders))
-    import pdb
-    pdb.set_trace()
-    assert len(gemini.exchange_state().order_book().asks())
+    success = await wait_until(lambda: len(exchange_state._orders))
+    assert success
+    #import pdb
+    #pdb.set_trace()
+    #assert len(gemini.exchange_state().order_book().asks())
 
 
 # Works, but is a manual process to setup the test. See above for the correct
