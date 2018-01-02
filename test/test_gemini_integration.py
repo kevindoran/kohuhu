@@ -11,7 +11,7 @@ from decimal import Decimal
 import logging
 # TODO: is there a way to do this from the command line?
 # When something fails, something is spamming the INFO log.
-logging.disable(logging.WARNING)
+#logging.disable(logging.WARNING)
 
 credentials.load_credentials()
 
@@ -44,6 +44,7 @@ def event_loop():
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
     gemini = GeminiExchange(sandbox=True)
+    await gemini.open_orders_websocket()
     coroutines = gemini.coroutines()
     tasks = []
     for c in coroutines:
@@ -58,6 +59,8 @@ async def live_sandbox_exchange(event_loop):
             t.cancel()
         # FIXME: This doesn't really close things down properly. stop() doesn't
         # work and then we get an exception on close().
+        gemini.close_market_data_websocket()
+        gemini.close_orders_websocket()
         await asyncio.sleep(1)
         event_loop.stop()
         event_loop.close()
@@ -78,7 +81,7 @@ async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
     start_time = datetime.datetime.now()
     max_wait = datetime.timedelta(seconds=30)
     while not test():
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
         if (datetime.datetime.now() - start_time) > max_wait:
             return False
     return True
@@ -90,13 +93,14 @@ async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
 async def test_market_buy(live_sandbox_exchange):
     gemini = live_sandbox_exchange
     exchange_state = gemini.exchange_state()
-    success = await wait_until(lambda: len(exchange_state.order_book().asks()))
-    assert success
-    lowest_ask = exchange_state.order_book().asks()[0]
-    ask_amount = exchange_state.order_book().asks_remaining(lowest_ask)
-    # Lets make a market bid at this price.
-    # Make the bid small so we don't use up all our funds.
-    bid_amount = Decimal(min(Decimal("0.000001"), ask_amount))
+    #success = await wait_until(lambda: len(exchange_state.order_book().asks()))
+    #assert success
+    #lowest_ask = exchange_state.order_book().asks()[0]
+    #ask_amount = exchange_state.order_book().asks_remaining(lowest_ask)
+    ## Lets make a market bid at this price.
+    ## Make the bid small so we don't use up all our funds.
+    #bid_amount = Decimal(min(Decimal("0.00001"), ask_amount))
+    bid_amount = Decimal("0.00001")
     bid_action = exchanges.CreateOrder("gemini_sandbox",
                                        exchanges.Order.Side.BID,
                                        exchanges.Order.Type.MARKET,
@@ -104,8 +108,6 @@ async def test_market_buy(live_sandbox_exchange):
     gemini.execute_action(bid_action)
     success = await wait_until(lambda: len(exchange_state._orders))
     assert success
-    #import pdb
-    #pdb.set_trace()
     #assert len(gemini.exchange_state().order_book().asks())
 
 

@@ -190,6 +190,7 @@ class GeminiExchange(ExchangeClient):
             self.heartbeat_seq = 0
             self.seq = 0
             self.heartbeat_timestamp_ms = None
+            self.ws = None
 
     standard_exchange_name = "gemini"
     sandbox_exchange_name = "gemini_sandbox"
@@ -197,6 +198,7 @@ class GeminiExchange(ExchangeClient):
     sandbox_rest_url_base = "https://api.sandbox.gemini.com"
     standard_wss_url_base = "wss://api.gemini.com"
     sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
+
 
     def __init__(self, sandbox=False):
         self.request_retry_limit = 4
@@ -223,19 +225,21 @@ class GeminiExchange(ExchangeClient):
         self._orders_queue = asyncio.Queue()
         self._on_update_callback = None
 
+
     def _nonce(self):
         # Note: if we use multithreading for a single exchange, this may
         # cause an issue.
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
-        return delta.total_seconds() * 1000
+        return int(delta.total_seconds() * 1000)
 
 
     def set_on_change_callback(self, callback):
         self._on_update_callback = callback
 
+
     def coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
-        orders_receive_coro = self._open_orders_websocket()
+        orders_receive_coro = self._listen_on_orders()
         market_data_receive_coro = self._open_market_data_websocket()
         process_orders_coro = self._process_queue(self._orders_queue,
                                 callback=self._handle_orders,
@@ -247,8 +251,16 @@ class GeminiExchange(ExchangeClient):
         return (orders_receive_coro, market_data_receive_coro,
                 process_orders_coro, process_market_data_coro)
 
+    def _sign(self, dict_payload, encoding="ascii"):
+        payload_bytes = json.dumps(dict_payload,
+                                   separators=(',', ':')).encode(encoding)
+        b64 = base64.b64encode(payload_bytes)
+        creds = credentials.credentials_for(self.exchange_name)
+        secret_bytes = creds.api_secret.encode(encoding)
+        signature = hmac.new(secret_bytes, b64, sha384).hexdigest()
+        return b64, signature
 
-    def _create_headers(self, path, parameters=None):
+    def _create_headers(self, path, parameters=None, encoding="ascii"):
         if parameters is None:
             parameters = dict()
         payload = {
@@ -256,65 +268,55 @@ class GeminiExchange(ExchangeClient):
             'nonce': self._nonce()
         }
         payload.update(parameters)
-        encoded_payload = base64.b64encode(json.dumps(payload,
-                                                      separators=(',', ':'))
-                                           .encode('ascii'))
         creds = credentials.credentials_for(self.exchange_name)
-
-        # TODO: double check this is the correct way of generating the signature.
-        signature = hmac.new(creds.api_secret.encode('ascii'), encoded_payload,
-                             sha384).hexdigest()
-
+        b64, signature = self._sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
-            #'Content-Type': 'text/plain',
+            'Content-Type': 'text/plain',
             #'Content-Length': 0,
-            'X-GEMINI-PAYLOAD': encoded_payload,
+            'X-GEMINI-PAYLOAD': b64.decode(encoding),
             'X-GEMINI-APIKEY': creds.api_key,
             'X-GEMINI-SIGNATURE': signature
         }
         return headers
 
-    async def _open_orders_websocket(self):
-        try:
-            orders_path = '/v1/orders/events'
-            headers = self._create_headers(orders_path)
-            # Filter order events so that only events from this key are sent.
-            creds = credentials.credentials_for(self.exchange_name)
-            order_events_url = self._wss_url_base + '/v1/orders/events?' \
-                              f'heartbeat=true&apiSessionFilter={creds.api_key}'
-            async with websockets.connect(order_events_url,
-                                          extra_headers=headers) as websocket:
-                # Block waiting for a new websocket message.
-                async for message in websocket:
-                    if self._orders_queue.qsize() >= 100:
-                        log.warning("Websocket message queue is has "
-                                    f"{self._orders_queue.qsize()} pending "
-                                    "messages.")
-                    await self._orders_queue.put(message)
-        except websockets.exceptions.InvalidStatusCode as ex:
-            if str(ex.status_code).startswith("5"):
-                # TODO
-                #self._exchange_offline_callback(message=ex)
-                pass
+    async def open_orders_websocket(self):
+        orders_path = '/v1/order/events'
+        headers = self._create_headers(orders_path, encoding="utf-8")
+        # Filter order events so that only events from this key are sent.
+        creds = credentials.credentials_for(self.exchange_name)
+        order_events_url = self._wss_url_base + orders_path #+ '?' \
+                          #f'heartbeat=true&apiSessionFilter={creds.api_key}'
+        self._orders_sock_info.ws = await websockets.client.connect(
+            order_events_url, extra_headers=headers)
+
+    async def close_orders_websocket(self):
+        await self._orders_sock_info.ws.close()
+
+    async def close_market_data_websocket(self):
+        await self._market_data_sock_info.ws.close()
 
     async def _open_market_data_websocket(self):
         market_data_url = self._wss_url_base + \
                           '/v1/marketdata/BTCUSD?heartbeat=true'
-        try:
-            async with websockets.connect(market_data_url) as websocket:
-                # Block waiting for a new websocket message.
-                async for message in websocket:
-                    if self._market_data_queue.qsize() >= 100:
-                        log.warning("Websocket message queue is has "
-                                    f"{self._market_data_queue.qsize()} pending"
-                                    " messages.")
-                    await self._market_data_queue.put(message)
-        except websockets.exceptions.InvalidStatusCode as ex:
-            if str(ex.status_code).startswith("5"):
-                # TODO
-                #self._exchange_offline_callback(message=ex)
-                pass
+        self._market_data_sock_info.ws = await websockets.client.connect(
+            market_data_url)
+
+    async def _listen_on_orders(self):
+        async for message in self._orders_sock_info.ws:
+            if self._orders_queue.qsize() >= 100:
+                log.warning("Websocket message queue is has "
+                            f"{self._orders_queue.qsize()} pending "
+                            "messages.")
+            await self._orders_queue.put(message)
+
+    async def _listen_on_market_data(self):
+        async for message in self._market_data_sock_info.ws:
+            if self._market_data_queue.qsize() >= 100:
+                log.warning("Websocket message queue is has "
+                            f"{self._market_data_queue.qsize()} pending"
+                            " messages.")
+            await self._market_data_queue.put(message)
 
     async def _process_queue(self, queue, callback, socket_info,
                              has_heartbeat_seq=True):
@@ -352,7 +354,6 @@ class GeminiExchange(ExchangeClient):
     @staticmethod
     def _process_heartbeat(response, socket_info):
         """
-
         Args:
             response (dict): json response from the Gemini API.
             socket_info (SocketInfo): the SocketInfo of the connection.
@@ -403,6 +404,8 @@ class GeminiExchange(ExchangeClient):
 
     def _handle_orders(self, response):
         response_type = response['type']
+        import pdb
+        pdb.set_trace()
         if response_type == "subscription_ack":
             # Insure the subscription details are expected. Don't do anything.
             account_id = response['accountId']

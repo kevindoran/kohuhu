@@ -7,6 +7,30 @@ from decimal import Decimal
 credentials.load_credentials("api_credentials.json.example")
 gemini_example_api_key = "abcdefghi"
 
+
+@pytest.fixture
+def real_credentials():
+    credentials.load_credentials("api_credentials.json")
+    yield None
+    credentials.load_credentials("api_credentials.json.example")
+
+def test_sign(real_credentials):
+    payload = {
+        'request': '/v1/balances',
+        'nonce': 1514846902551
+    }
+
+    # Not sure why, but for REST, the signature should be UTF-8 and the payload
+    # should be ASCII.
+    expected_signature = "d4fbe48032c9ef4cbc99f978e925785387505d090af0703d13e0df6c0c509bbc96446f48225e6b20c28e0c75f7bd97b9"
+    expected_payload = "eyJyZXF1ZXN0IjoiL3YxL2JhbGFuY2VzIiwibm9uY2UiOjE1MTQ4NDY5MDI1NTF9".encode("ascii")
+
+    gemini = GeminiExchange(sandbox=True)
+    b64, signature = gemini._sign(payload)
+    assert expected_signature == signature
+    assert b64 == expected_payload
+
+
 @pytest.fixture
 def heartbeat_response():
     test_heartbeat_response = {
