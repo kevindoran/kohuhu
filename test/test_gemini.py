@@ -26,7 +26,7 @@ def test_sign(real_credentials):
     expected_payload = "eyJyZXF1ZXN0IjoiL3YxL2JhbGFuY2VzIiwibm9uY2UiOjE1MTQ4NDY5MDI1NTF9".encode("ascii")
 
     gemini = GeminiExchange(sandbox=True)
-    b64, signature = gemini._sign(payload)
+    b64, signature = gemini._encode_and_sign(payload)
     assert expected_signature == signature
     assert b64 == expected_payload
 

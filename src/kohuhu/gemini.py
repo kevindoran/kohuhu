@@ -251,7 +251,7 @@ class GeminiExchange(ExchangeClient):
         return (orders_receive_coro, market_data_receive_coro,
                 process_orders_coro, process_market_data_coro)
 
-    def _sign(self, dict_payload, encoding="ascii"):
+    def _encode_and_sign(self, dict_payload, encoding="ascii"):
         payload_bytes = json.dumps(dict_payload,
                                    separators=(',', ':')).encode(encoding)
         b64 = base64.b64encode(payload_bytes)
@@ -269,7 +269,7 @@ class GeminiExchange(ExchangeClient):
         }
         payload.update(parameters)
         creds = credentials.credentials_for(self.exchange_name)
-        b64, signature = self._sign(payload, encoding)
+        b64, signature = self._encode_and_sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
             'Content-Type': 'text/plain',
