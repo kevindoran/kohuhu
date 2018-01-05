@@ -307,7 +307,6 @@ class GeminiExchange(ExchangeClient):
         creds = credentials.credentials_for(self.exchange_name)
         order_events_url = self._wss_url_base + orders_path
         # Uncommented until we have the orders websocket working correctly.
-        #+ '?' + f'heartbeat=true&apiSessionFilter={creds.api_key}'
         self._orders_sock_info.ws = await websockets.client.connect(
             order_events_url, extra_headers=headers)
 
@@ -358,6 +357,10 @@ class GeminiExchange(ExchangeClient):
         while True:
             message = await socket_info.queue.get()
             response = json.loads(message)
+            if type(response) == list and not len(response):
+                log.warning("Received empty message from Gemini. This isn't a "
+                            "type of response documented in their API docs.")
+                return
             if response['type'] == 'heartbeat':
                 if has_heartbeat_seq:
                     self._process_heartbeat(response, socket_info)
@@ -455,14 +458,15 @@ class GeminiExchange(ExchangeClient):
             if len(symbol_filter) or len(event_type_filter):
                 raise Exception("No symbol or event type were specified, but "
                                 "filters were registered.")
-            if len(api_session_filter) != 1:
-                raise Exception("1 session filter should have been registered."
-                                f"{len(api_session_filter)} were registered.")
-            accepted_key = api_session_filter[0]
-            if accepted_key != credentials.credentials_for(self.exchange_name)\
-                    .api_key:
-                raise Exception("The whitelisted api session key does not "
-                                "match our session key.")
+            # TODO: uncomment when the filtering is working properly.
+            #if len(api_session_filter) != 0:
+            #    raise Exception("1 session filter should have been registered."
+            #                    f"{len(api_session_filter)} were registered.")
+            #accepted_key = api_session_filter[0]
+            #if accepted_key != credentials.credentials_for(self.exchange_name)\
+            #        .api_key:
+            #    raise Exception("The whitelisted api session key does not "
+            #                    "match our session key.")
         elif response_type == "initial":
             # Create a new order record for the initial response.
             order_response = OrderResponse.from_json_dict(response)

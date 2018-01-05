@@ -51,21 +51,22 @@ async def live_sandbox_exchange(event_loop):
         t = asyncio.ensure_future(c, loop=event_loop)
         tasks.append(t)
     yield gemini
-    print("Loop running? {}".format(event_loop.is_running()))
-    #fin_cancelled, pending_cancelled = event_loop.run_until_complete(
-    #   asyncio.wait(tasks, timeout=2))
+    for t in tasks:
+        # From the cancel() docs:
+        #     "This arranges for a CancelledError to be thrown into the wrapped
+        #     coroutine on the next cycle through the event loop."
+        # So we add a sleep call after calling cancel()
+        t.cancel()
+    await asyncio.sleep(1)
     try:
         for t in tasks:
-            t.cancel()
-        # FIXME: This doesn't really close things down properly. stop() doesn't
-        # work and then we get an exception on close().
-        gemini.close_market_data_websocket()
-        gemini.close_orders_websocket()
-        await asyncio.sleep(1)
-        event_loop.stop()
-        event_loop.close()
-    except Exception:
-        pass
+            t.result()
+    except asyncio.CancelledError as ex:
+        logging.exception(ex)
+    await gemini.close_orders_websocket()
+    # I'm not sure if we need to call one or both of these.
+    #event_loop.stop()
+    #event_loop.close()
 
 
 def test_get_balance(sandbox_exchange):
@@ -108,7 +109,6 @@ async def test_market_buy(live_sandbox_exchange):
     gemini.execute_action(bid_action)
     success = await wait_until(lambda: len(exchange_state._orders))
     assert success
-    #assert len(gemini.exchange_state().order_book().asks())
 
 
 # Works, but is a manual process to setup the test. See above for the correct
