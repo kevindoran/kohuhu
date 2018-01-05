@@ -17,13 +17,12 @@ def real_credentials():
 def test_sign(real_credentials):
     payload = {
         'request': '/v1/balances',
-        'nonce': 1514846902551
+        'nonce': 1515123745863
     }
 
-    # Not sure why, but for REST, the signature should be UTF-8 and the payload
-    # should be ASCII.
-    expected_signature = "d4fbe48032c9ef4cbc99f978e925785387505d090af0703d13e0df6c0c509bbc96446f48225e6b20c28e0c75f7bd97b9"
-    expected_payload = "eyJyZXF1ZXN0IjoiL3YxL2JhbGFuY2VzIiwibm9uY2UiOjE1MTQ4NDY5MDI1NTF9".encode("ascii")
+    # For REST, the signature should be UTF-8 and the payload should be ASCII.
+    expected_signature = "6713960635c1996274fc35642084bdedc74a6a483bf35b0c3c2f8c331f1ee427711ae30b61cfc2be856c65a0c849ec52"
+    expected_payload = b"eyJyZXF1ZXN0IjogIi92MS9iYWxhbmNlcyIsICJub25jZSI6IDE1MTUxMjM3NDU4NjN9"
 
     gemini = GeminiExchange(sandbox=True)
     b64, signature = gemini._encode_and_sign(payload)

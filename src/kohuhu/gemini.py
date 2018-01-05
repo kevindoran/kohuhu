@@ -185,12 +185,16 @@ class GeminiExchange(ExchangeClient):
             seq (int): the next expected socket sequence number.
             heartbeat_timestamp_ms (int): the timestamp in milliseconds at which
                 the last heartbeat was received.
+            ws (WebSocketClientProtocol): the websocket socket.
+            queue (asyncio.Queue): a queue used to access the messages received
+                on this websocket.
         """
         def __init__(self):
             self.heartbeat_seq = 0
             self.seq = 0
             self.heartbeat_timestamp_ms = None
             self.ws = None
+            self.queue = asyncio.Queue()
 
     standard_exchange_name = "gemini"
     sandbox_exchange_name = "gemini_sandbox"
@@ -202,7 +206,6 @@ class GeminiExchange(ExchangeClient):
 
     def __init__(self, sandbox=False):
         self.request_retry_limit = 4
-
         self.exchange_name = self.sandbox_exchange_name if sandbox \
             else self.standard_exchange_name
         self._rest_url_base = self.sandbox_rest_url_base if sandbox \
@@ -215,18 +218,14 @@ class GeminiExchange(ExchangeClient):
         self._orders_sock_info = self.SocketInfo()
         self._market_data_sock_info = self.SocketInfo()
         self._orders = {}
-
-        # The market data queue contains contains websocket responses from the
-        # public market data websocket feed.
-        self._market_data_queue = asyncio.Queue()
-
-        # The orders queue contains websocket responses from the private orders
-        # websocket feed.
-        self._orders_queue = asyncio.Queue()
         self._on_update_callback = None
 
 
     def _nonce(self):
+        """"A nonce for the Gemini exchange API.
+
+        Gemini requires that the nonce is increasing.
+        """
         # Note: if we use multithreading for a single exchange, this may
         # cause an issue.
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
@@ -240,11 +239,10 @@ class GeminiExchange(ExchangeClient):
     def coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
         orders_receive_coro = self._listen_on_orders()
-        market_data_receive_coro = self._open_market_data_websocket()
-        process_orders_coro = self._process_queue(self._orders_queue,
-                                callback=self._handle_orders,
+        market_data_receive_coro = self._listen_on_market_data()
+        process_orders_coro = self._process_queue(callback=self._handle_orders,
                                 socket_info=self._orders_sock_info)
-        process_market_data_coro = self._process_queue(self._market_data_queue,
+        process_market_data_coro = self._process_queue(
                                 callback=self._handle_market_data,
                                 socket_info=self._market_data_sock_info,
                                 has_heartbeat_seq=False)
@@ -252,8 +250,8 @@ class GeminiExchange(ExchangeClient):
                 process_orders_coro, process_market_data_coro)
 
     def _encode_and_sign(self, dict_payload, encoding="ascii"):
-        payload_bytes = json.dumps(dict_payload,
-                                   separators=(',', ':')).encode(encoding)
+        """Encode the payload for sending and calculate it's hash signature."""
+        payload_bytes = json.dumps(dict_payload).encode(encoding)
         b64 = base64.b64encode(payload_bytes)
         creds = credentials.credentials_for(self.exchange_name)
         secret_bytes = creds.api_secret.encode(encoding)
@@ -261,6 +259,22 @@ class GeminiExchange(ExchangeClient):
         return b64, signature
 
     def _create_headers(self, path, parameters=None, encoding="ascii"):
+        """Returns the headers to be send with a Gemini API request.
+
+        Gemini sends all it's data in the HTTP headers. Data is send in the
+        X-GEMINI-PAYLOAD header. When sending over rest, the data should be
+        encoded in ASCII, and when using websockets, the data should be encoded
+        in UTF-8.
+
+        Args:
+            path (str): path of the endpoint. Gemini requires the endpoint path
+                to be specified as a parameter within the JSON payload.
+            parameters (dict): the data to be send in the JSON payload. This
+                method appends the endpoint path and the nonce when sending
+                the parameters.
+            encoding (str): the encoding to use for the payload (ASCII for REST
+                and UTF-8 for websockets).
+        """
         if parameters is None:
             parameters = dict()
         payload = {
@@ -272,7 +286,7 @@ class GeminiExchange(ExchangeClient):
         b64, signature = self._encode_and_sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
-            'Content-Type': 'text/plain',
+            #'Content-Type': 'text/plain',
             #'Content-Length': 0,
             'X-GEMINI-PAYLOAD': b64.decode(encoding),
             'X-GEMINI-APIKEY': creds.api_key,
@@ -281,12 +295,19 @@ class GeminiExchange(ExchangeClient):
         return headers
 
     async def open_orders_websocket(self):
+        """Opens the websocket for getting our order details.
+
+        This co-routine should not be a background task, as it can be
+        important to open the websocket before doing something else (tests
+        require this).
+        """
         orders_path = '/v1/order/events'
         headers = self._create_headers(orders_path, encoding="utf-8")
         # Filter order events so that only events from this key are sent.
         creds = credentials.credentials_for(self.exchange_name)
-        order_events_url = self._wss_url_base + orders_path #+ '?' \
-                          #f'heartbeat=true&apiSessionFilter={creds.api_key}'
+        order_events_url = self._wss_url_base + orders_path
+        # Uncommented until we have the orders websocket working correctly.
+        #+ '?' + f'heartbeat=true&apiSessionFilter={creds.api_key}'
         self._orders_sock_info.ws = await websockets.client.connect(
             order_events_url, extra_headers=headers)
 
@@ -297,31 +318,45 @@ class GeminiExchange(ExchangeClient):
         await self._market_data_sock_info.ws.close()
 
     async def _open_market_data_websocket(self):
+        """Opens the websocket for getting market data.
+
+        This co-routine should not be a background task, as it can be
+        important to open the websocket before doing something else (tests
+        require this).
+        """
         market_data_url = self._wss_url_base + \
                           '/v1/marketdata/BTCUSD?heartbeat=true'
         self._market_data_sock_info.ws = await websockets.client.connect(
             market_data_url)
 
     async def _listen_on_orders(self):
+        """Listen on the orders websocket for updates to our orders."""
         async for message in self._orders_sock_info.ws:
-            if self._orders_queue.qsize() >= 100:
+            if self._orders_sock_info.queue.qsize() >= 100:
                 log.warning("Websocket message queue is has "
-                            f"{self._orders_queue.qsize()} pending "
+                            f"{self._orders_sock_info.queue.qsize()} pending "
                             "messages.")
-            await self._orders_queue.put(message)
+            await self._orders_sock_info.queue.put(message)
 
     async def _listen_on_market_data(self):
+        """Listen on the market websocket for order book updates."""
         async for message in self._market_data_sock_info.ws:
-            if self._market_data_queue.qsize() >= 100:
+            if self._market_data_sock_info.queue.qsize() >= 100:
                 log.warning("Websocket message queue is has "
-                            f"{self._market_data_queue.qsize()} pending"
+                            f"{self._market_data_sock_info.queue.qsize()} pending"
                             " messages.")
-            await self._market_data_queue.put(message)
+            await self._market_data_sock_info.queue.put(message)
 
-    async def _process_queue(self, queue, callback, socket_info,
+    async def _process_queue(self, callback, socket_info,
                              has_heartbeat_seq=True):
+        """Wait on a websocket and call callback when a message is received.
+
+        This method parses the message to JSON, deals with heartbeat messages
+        and checks message sequence numbers. This processing is required for
+        all Gemini websocket endpoints.
+        """
         while True:
-            message = await queue.get()
+            message = await socket_info.queue.get()
             response = json.loads(message)
             if response['type'] == 'heartbeat':
                 if has_heartbeat_seq:
@@ -329,7 +364,7 @@ class GeminiExchange(ExchangeClient):
                 continue
             self._check_sequence(response, socket_info)
             callback(response)
-            if not queue.empty():
+            if not socket_info.queue.empty():
                 continue
             if self._on_update_callback:
                 self._on_update_callback()
@@ -353,10 +388,12 @@ class GeminiExchange(ExchangeClient):
 
     @staticmethod
     def _process_heartbeat(response, socket_info):
-        """
+        """Check if the heartbeat is valid. Update our heartbeat records.
+
         Args:
             response (dict): json response from the Gemini API.
-            socket_info (SocketInfo): the SocketInfo of the connection.
+            socket_info (SocketInfo): the SocketInfo of the connection. This
+                will be updated with the latest heartbeat info.
 
         Returns:
             (bool): True if the response was a heartbeat, False otherwise.
@@ -368,7 +405,7 @@ class GeminiExchange(ExchangeClient):
         heartbeat_seq = response['sequence']
         # TODO: is the field socket_sequence always present?
         socket_seq = response['socket_sequence']
-        # Unused:
+        # Unused response data:
         # trace_id is used fo logging. No use for it yet.
         #trace_id = response['trade_id']
         if socket_seq == 0:
@@ -383,6 +420,7 @@ class GeminiExchange(ExchangeClient):
 
 
     def _handle_market_data(self, response):
+        """Updates the order book when a market data update is received."""
         if response['type'] != 'update':
             err_msg = f"Got unexpected response: {response['type']}"
             logging.info(err_msg)
@@ -403,9 +441,9 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("Unexpected update side: " + side)
 
     def _handle_orders(self, response):
+        """Update the order records when a message is received on /order/events.
+        """
         response_type = response['type']
-        import pdb
-        pdb.set_trace()
         if response_type == "subscription_ack":
             # Insure the subscription details are expected. Don't do anything.
             account_id = response['accountId']
@@ -536,6 +574,7 @@ class GeminiExchange(ExchangeClient):
 
 
     def execute_action(self, action):
+        """Ren the given action on this exchange."""
         if action.exchange != self.exchange_name:
             raise Exception(f"An action for exchange '{action.exchange}' was "
                             "given to GeminiExchange.")
@@ -550,6 +589,7 @@ class GeminiExchange(ExchangeClient):
 
 
     def _cancel_order_parameters(self, cancel_order_action):
+        """Generates the API parameters to execute the given cancel action."""
         parameters = {
             'order_id': cancel_order_action.order_id
         }
@@ -557,7 +597,7 @@ class GeminiExchange(ExchangeClient):
 
 
     def _new_order_parameters(self, create_order_action):
-        # TODO: only one of these is needed.
+        """Generates the API parameters to execute the given create action."""
         parameters = {}
         parameters['client_order_id'] = str(id(create_order_action))
         parameters['amount'] = str(create_order_action.amount)
@@ -575,14 +615,14 @@ class GeminiExchange(ExchangeClient):
             if create_order_action.side == exchanges.Order.Side.BID:
                 parameters['price'] = temp_max_price
             else:
-             parameters['price'] = temp_min_price
+                parameters['price'] = temp_min_price
         else:
             parameters['price'] = str(create_order_action.price)
         return parameters
 
 
     def _post_http_request(self, path, parameters=None):
-        """Sends a POST to the Gemini API.
+        """Sends a POST to the Gemini API. Retries on failure up to 4 times.
 
         Attributes:
             path (str): the API path to post to (e.g. /v1/orders/new).

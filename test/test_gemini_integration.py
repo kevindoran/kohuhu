@@ -15,7 +15,7 @@ import logging
 
 credentials.load_credentials()
 
-use_proxy = True
+use_proxy = False
 if use_proxy:
     os.environ["HTTP_PROXY"] = "http://127.0.0.1:8080"
     os.environ["HTTPS_PROXY"] = "https://127.0.0.1:8080"
