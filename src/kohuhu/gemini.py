@@ -203,7 +203,6 @@ class GeminiExchange(ExchangeClient):
     standard_wss_url_base = "wss://api.gemini.com"
     sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
 
-
     def __init__(self, sandbox=False):
         self.request_retry_limit = 4
         self.exchange_name = self.sandbox_exchange_name if sandbox \
@@ -220,7 +219,6 @@ class GeminiExchange(ExchangeClient):
         self._orders = {}
         self._on_update_callback = None
 
-
     def _nonce(self):
         """"A nonce for the Gemini exchange API.
 
@@ -231,10 +229,8 @@ class GeminiExchange(ExchangeClient):
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
         return int(delta.total_seconds() * 1000)
 
-
     def set_on_change_callback(self, callback):
         self._on_update_callback = callback
-
 
     def coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
@@ -305,7 +301,9 @@ class GeminiExchange(ExchangeClient):
         headers = self._create_headers(orders_path, encoding="utf-8")
         # Filter order events so that only events from this key are sent.
         creds = credentials.credentials_for(self.exchange_name)
-        order_events_url = self._wss_url_base + orders_path
+        order_events_url = self._wss_url_base + orders_path + \
+                           f'?heartbeat=true&apiSessionFilter={creds.api_key}'
+
         # Uncommented until we have the orders websocket working correctly.
         self._orders_sock_info.ws = await websockets.client.connect(
             order_events_url, extra_headers=headers)
@@ -425,7 +423,6 @@ class GeminiExchange(ExchangeClient):
         socket_info.heartbeat_seq += 1
         socket_info.heartbeat_timestamp_ms = timestamp_ms
 
-
     def _handle_market_data(self, response):
         """Updates the order book when a market data update is received."""
         if response['type'] != 'update':
@@ -463,14 +460,14 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("No symbol or event type were specified, but "
                                 "filters were registered.")
             # TODO: uncomment when the filtering is working properly.
-            #if len(api_session_filter) != 0:
-            #    raise Exception("1 session filter should have been registered."
-            #                    f"{len(api_session_filter)} were registered.")
-            #accepted_key = api_session_filter[0]
-            #if accepted_key != credentials.credentials_for(self.exchange_name)\
-            #        .api_key:
-            #    raise Exception("The whitelisted api session key does not "
-            #                    "match our session key.")
+            if len(api_session_filter) != 1:
+                raise Exception("1 session filter should have been registered."
+                                f"{len(api_session_filter)} were registered.")
+            accepted_key = api_session_filter[0]
+            if accepted_key != credentials.credentials_for(self.exchange_name)\
+                    .api_key:
+                raise Exception("The whitelisted api session key does not "
+                                "match our session key.")
         elif response_type == "initial":
             # Create a new order record for the initial response.
             order_response = OrderResponse.from_json_dict(response)
@@ -580,7 +577,6 @@ class GeminiExchange(ExchangeClient):
     def exchange_state(self):
         return self._exchange_state
 
-
     def execute_action(self, action):
         """Ren the given action on this exchange."""
         if action.exchange != self.exchange_name:
@@ -595,14 +591,12 @@ class GeminiExchange(ExchangeClient):
             params = self._cancel_order_parameters(action)
             self._post_http_request(cancel_order_path, params)
 
-
     def _cancel_order_parameters(self, cancel_order_action):
         """Generates the API parameters to execute the given cancel action."""
         parameters = {
             'order_id': cancel_order_action.order_id
         }
         return parameters
-
 
     def _new_order_parameters(self, create_order_action):
         """Generates the API parameters to execute the given create action."""
@@ -627,7 +621,6 @@ class GeminiExchange(ExchangeClient):
         else:
             parameters['price'] = str(create_order_action.price)
         return parameters
-
 
     def _post_http_request(self, path, parameters=None):
         """Sends a POST to the Gemini API. Retries on failure up to 4 times.
@@ -658,7 +651,6 @@ class GeminiExchange(ExchangeClient):
                             f"Parameters: {str(parameters)}")
         return response
 
-
     def update_order_book(self):
         # The order book is kept up to date automatically.
         pass
@@ -680,7 +672,6 @@ class GeminiExchange(ExchangeClient):
             on_hold = amount - available
             self._exchange_state.balance().set_free(currency, free)
             self._exchange_state.balance().set_on_hold(currency, on_hold)
-
 
     def update_orders(self):
         # The orders are updated automatically.
