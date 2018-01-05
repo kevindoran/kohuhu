@@ -459,7 +459,6 @@ class GeminiExchange(ExchangeClient):
             if len(symbol_filter) or len(event_type_filter):
                 raise Exception("No symbol or event type were specified, but "
                                 "filters were registered.")
-            # TODO: uncomment when the filtering is working properly.
             if len(api_session_filter) != 1:
                 raise Exception("1 session filter should have been registered."
                                 f"{len(api_session_filter)} were registered.")
