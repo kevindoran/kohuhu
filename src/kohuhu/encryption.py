@@ -2,6 +2,7 @@ import getpass
 import argparse
 import argcomplete
 import base64
+import random
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -35,6 +36,15 @@ def prompt_for_passphrase(confirm=False):
             print("Passphrases do not match. Exiting.")
             exit(1)
     return passphrase
+
+
+def generate_nonce(cls, length=8):
+    """Generate a pseudo-random number.
+
+    From SO: https://stackoverflow.com/questions/5590170/what-is-the-stand
+    ard-method-for-generating-a-nonce-in-python
+    """
+    return ''.join([str(random.randint(0, 9)) for i in range(length)])
 
 
 def main():

@@ -104,16 +104,28 @@ class Balance:
         self._free = {}
         self._on_hold = {}
 
+    def _check_symbol(self, symbol):
+        if symbol.upper() != symbol:
+            logging.warning("The currency symbols should be upper-case. "
+                            f"Invalid symbol: '{symbol}' given. Switching it "
+                            "to upper-case.")
+        return symbol.upper()
+
+
     def free(self, symbol):
+        symbol = self._check_symbol(symbol)
         return self._free.get(symbol, Decimal(0))
 
     def on_hold(self, symbol):
+        symbol = self._check_symbol(symbol)
         return self._on_hold.get(symbol, Decimal(0))
 
     def set_free(self, symbol, amount):
+        symbol = self._check_symbol(symbol)
         self._free[symbol] = amount
 
     def set_on_hold(self, symbol, amount):
+        symbol = self._check_symbol(symbol)
         self._on_hold[symbol] = amount
 
 
@@ -179,6 +191,11 @@ class State:
 class Action:
     """An action to run on an exchange."""
 
+    class Status(Enum):
+        PENDING = auto()
+        SUCCESS = auto()
+        FAILED = auto()
+
     def __init__(self, exchange_id):
         self.exchange = exchange_id
 
@@ -207,10 +224,7 @@ class CreateOrder(Action):
             order_id that is created.
     """
 
-    class Status(Enum):
-        PENDING = auto()
-        SUCCESS = auto()
-        FAILED = auto()
+
 
     def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__(exchange_id)
@@ -253,22 +267,31 @@ class CancelOrder(Action):
 class ExchangeClient:
     """Keeps the ExchangeState of an exchange up to date. Also executes actions.
     """
+    def coroutines(self):
+        """Creates and returns all coroutines to be run in the async loop."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def set_on_change_callback(self, callback):
-        pass
+        """Sets the callback to be called after any exchange data is updated."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def exchange_state(self):
-        pass
+        """Returns the exchange state managed by this exchange client."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def update_order_book(self):
-        pass
+        """Retrieve the latest order book information."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def update_balance(self):
-        pass
+        """Retrieves the latest balance information."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def update_orders(self):
-        pass
+        """Retrieves the latest information on all our orders."""
+        return NotImplementedError("Subclasses must implement this function.")
 
     def execute_action(self, action):
-        pass
+        """Executes the given action on this exchange."""
+        return NotImplementedError("Subclasses must implement this function.")
 
