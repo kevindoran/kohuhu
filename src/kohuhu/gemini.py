@@ -316,7 +316,7 @@ class GeminiExchange(ExchangeClient):
     async def close_market_data_websocket(self):
         await self._market_data_sock_info.ws.close()
 
-    async def _open_market_data_websocket(self):
+    async def open_market_data_websocket(self):
         """Opens the websocket for getting market data.
 
         This co-routine should not be a background task, as it can be
@@ -355,18 +355,22 @@ class GeminiExchange(ExchangeClient):
         all Gemini websocket endpoints.
         """
         while True:
-            message = await socket_info.queue.get()
-            response = json.loads(message)
-            if type(response) == list and not len(response):
+            unparsed_message = await socket_info.queue.get()
+            response = json.loads(unparsed_message)
+            # Sometimes the response is a list sometimes not. Convert to list.
+            message_list = response if type(response) == list else [response]
+            if not message_list:
                 log.warning("Received empty message from Gemini. This isn't a "
                             "type of response documented in their API docs.")
-                return
-            if response['type'] == 'heartbeat':
-                if has_heartbeat_seq:
-                    self._process_heartbeat(response, socket_info)
                 continue
-            self._check_sequence(response, socket_info)
-            callback(response)
+            if message_list[0]['type'] == 'heartbeat':
+                if has_heartbeat_seq:
+                    self._process_heartbeat(message_list[0], socket_info)
+                continue
+            # A non heartbeat message.
+            for message in message_list:
+                self._check_sequence(message, socket_info)
+                callback(message)
             if not socket_info.queue.empty():
                 continue
             if self._on_update_callback:
