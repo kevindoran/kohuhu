@@ -10,22 +10,37 @@ gemini_example_api_key = "abcdefghi"
 
 @pytest.fixture
 def real_credentials():
+    """A bit of a hacky fixture that switches to real credentials then back."""
     credentials.load_credentials("api_credentials.json")
     yield None
     credentials.load_credentials("api_credentials.json.example")
 
-def test_sign(real_credentials):
+
+def test_encode_and_sign(real_credentials):
+    """Tests that _encode_and_sign() produces the correct payload and signature.
+
+    The expected signature and payload were obtained by intercepting a
+    successful REST request made by the test_get_balance() test in
+    test_gemini_integration.py. To recreate the expected signature and payload,
+    run test_get_balance() with proxy mode enabled and intercept the REST
+    request with a tool such as BurpSuite.
+    """
+    # Setup
     payload = {
         'request': '/v1/balances',
         'nonce': 1515123745863
     }
-
     # For REST, the signature should be UTF-8 and the payload should be ASCII.
+    # The b infront of the expected_payload effectively makes it ASCII encoded.
+    # Without b prefix, Python 3 strings default to UTF-8 encoding.
     expected_signature = "6713960635c1996274fc35642084bdedc74a6a483bf35b0c3c2f8c331f1ee427711ae30b61cfc2be856c65a0c849ec52"
     expected_payload = b"eyJyZXF1ZXN0IjogIi92MS9iYWxhbmNlcyIsICJub25jZSI6IDE1MTUxMjM3NDU4NjN9"
-
     gemini = GeminiExchange(sandbox=True)
+
+    # Action
     b64, signature = gemini._encode_and_sign(payload)
+
+    # Check.
     assert expected_signature == signature
     assert b64 == expected_payload
 
@@ -123,6 +138,7 @@ def initial_response():
     }
     return test_response
 
+
 def test_process_initial(initial_response):
     """Test that GeminiExchange creates an order for an 'initial' response."""
     exchange = GeminiExchange()
@@ -145,6 +161,7 @@ def test_process_initial(initial_response):
     # an existing order.
     with pytest.raises(Exception):
         exchange._handle_orders(initial_response)
+
 
 @pytest.fixture
 def accepted_limit_bid_response():
@@ -202,6 +219,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     with pytest.raises(Exception):
         exchange._handle_orders(response)
 
+
 @pytest.fixture
 def accepted_market_sell_response():
     amount = Decimal(10)
@@ -229,6 +247,7 @@ def accepted_market_sell_response():
     }
     return test_response, action
 
+
 def test_process_accepted_market_sell(accepted_market_sell_response):
     response = accepted_market_sell_response[0]
     action = accepted_market_sell_response[1]
@@ -255,6 +274,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     exchange._actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
+
 
 @pytest.fixture
 def rejected_response():

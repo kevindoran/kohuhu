@@ -6,12 +6,7 @@ import datetime
 import os
 import kohuhu.credentials as credentials
 from decimal import Decimal
-
-
 import logging
-# TODO: is there a way to do this from the command line?
-# When something fails, something is spamming the INFO log.
-#logging.disable(logging.WARNING)
 
 credentials.load_credentials()
 
@@ -23,10 +18,30 @@ if use_proxy:
     # Taken from here: https://www.th3r3p0.com/random/python-requests-and-burp-suite.html
     os.environ["REQUESTS_CA_BUNDLE"] = "/home/k/.ssh/burpsuite_cert.pem"
 
+
+async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
+    start_time = datetime.datetime.now()
+    max_wait = datetime.timedelta(seconds=30)
+    while not test():
+        await asyncio.sleep(1)
+        if (datetime.datetime.now() - start_time) > max_wait:
+            return False
+    return True
+
+
 @pytest.fixture
 def sandbox_exchange():
     gemini = GeminiExchange(sandbox=True)
     return gemini
+
+
+def test_get_balance(sandbox_exchange):
+    """Get the balance and check that some BTC and USD are present."""
+    sandbox_exchange.update_balance()
+    balance = sandbox_exchange.exchange_state().balance()
+    assert balance
+    assert balance.free("USD") > Decimal(0)
+    assert balance.free("BTC") > Decimal(0)
 
 
 # Using pytest-asyncio to inject an event loop.
@@ -40,6 +55,7 @@ def sandbox_exchange():
 #    loop.set_debug(False)
 #    yield loop
 #    loop.close()
+
 
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
@@ -67,6 +83,7 @@ async def live_sandbox_exchange(event_loop):
     # I'm not sure if we need to call one or both of these.
     #event_loop.stop()
     #event_loop.close()
+
 
 # TODO: factor these two fixture methods.
 @pytest.fixture
@@ -100,27 +117,9 @@ async def live_sandbox_with_order_book(event_loop):
     gemini = live_sandbox_exchange
 
 
-def test_get_balance(sandbox_exchange):
-    """Get the balance and check that some BTC and USD are present."""
-    sandbox_exchange.update_balance()
-    balance = sandbox_exchange.exchange_state().balance()
-    assert balance
-    assert balance.free("USD") > Decimal(0)
-    assert balance.free("BTC") > Decimal(0)
-
-
-async def wait_until(test, max_wait=datetime.timedelta(seconds=3)):
-    start_time = datetime.datetime.now()
-    max_wait = datetime.timedelta(seconds=30)
-    while not test():
-        await asyncio.sleep(1)
-        if (datetime.datetime.now() - start_time) > max_wait:
-            return False
-    return True
-
-
 @pytest.mark.asyncio
 async def test_market_buy(live_sandbox_exchange):
+    """Executes a market bid and checks that the order is registered."""
     gemini = live_sandbox_exchange
     exchange_state = gemini.exchange_state()
 
@@ -133,8 +132,10 @@ async def test_market_buy(live_sandbox_exchange):
     success = await wait_until(lambda: len(exchange_state._orders))
     assert success
 
+
 @pytest.mark.asyncio
 async def test_order_book(live_sandbox_with_order_book):
+    """Insures the order book is populated after the gemini client starts up."""
     gemini = live_sandbox_with_order_book
     exchange_state = gemini.exchange_state()
     success = await wait_until(lambda: len(exchange_state.order_book().asks()))
