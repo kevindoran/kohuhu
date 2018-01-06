@@ -144,7 +144,7 @@ def test_process_initial(initial_response):
     exchange = GeminiExchange()
     # Test that the initial order is added to the exchange state.
     exchange._handle_orders(initial_response)
-    order = exchange.exchange_state().order(initial_response['order_id'])
+    order = exchange.exchange_state.order(initial_response['order_id'])
     assert order
     assert order.order_id == initial_response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
@@ -203,7 +203,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
     assert order.side == exchanges.Order.Side.BID
@@ -260,7 +260,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
     assert order.side == exchanges.Order.Side.ASK
@@ -319,7 +319,7 @@ def test_process_rejected(rejected_response):
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.CLOSED
     assert order.side == exchanges.Order.Side.BID
@@ -387,13 +387,13 @@ def test_process_complete_fill(complete_fill_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated and closed.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(0)
     assert order.filled == Decimal(response['executed_amount'])
@@ -467,13 +467,13 @@ def test_process_partial_fill(partial_fill_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated (but still open).
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -534,14 +534,14 @@ def test_process_cancelled(cancelled_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
     exchange._cancel_actions = {order.order_id: cancel_action}
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated and marked as cancelled.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -612,14 +612,14 @@ def test_process_cancel_rejected(cancel_rejected_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
     exchange._cancel_actions = {order.order_id: cancel_action}
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order values are correct. It should still be open.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -688,14 +688,14 @@ def test_process_closed(closed_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test
     # Test that the order has been marked as closed.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.status == exchanges.Order.Status.CLOSED
 

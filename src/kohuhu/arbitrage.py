@@ -63,12 +63,12 @@ class OneWayPairArbitrage(trader.Algorithm):
         self._live_limit_action = None
         self._previous_fill_amount = Decimal(0)
         self._market_orders_made = []
-        self._action_queue = None
+        self._add_action_callback = None
         self._state = None
 
-    def initialize(self, state, timer, action_queue):
+    def initialize(self, state, timer, add_action_callback):
         self._state = state
-        self._action_queue = action_queue
+        self._add_action_callback = add_action_callback
         if not state.for_exchange(self.exchange_buy_on) or \
            not state.for_exchange(self.exchange_sell_on):
             raise Exception(
@@ -76,6 +76,10 @@ class OneWayPairArbitrage(trader.Algorithm):
                 "exchanges were not present in the available exchanges: {}"
                 .format(self.exchange_buy_on, self.exchange_sell_on,
                         ",".join((e for e in state.exchanges()))))
+        state.for_exchange(self.exchange_buy_on).update_publisher.add_callback(
+            self.on_data)
+        state.for_exchange(self.exchange_buy_on).update_publisher.add_callback(
+            self.on_data)
         #timer.do_every(self.poll_period, self.on_data)
 
     def on_data(self, time_now=None):
@@ -84,7 +88,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             # Calculate the BTC market price on the exchange to sell on.
             self._live_limit_action = self._create_bid_limit_order(self._state)
             print("Putting one on")
-            self._action_queue.put(self._sanity_check_action(
+            self._add_action_callback(self._sanity_check_action(
                 self._live_limit_action))
 
         # There is a bid limit action.
@@ -131,7 +135,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         original_price = self._live_limit_action.order.price
         if self._should_cancel_order(original_price, new_best_price,
                                      self.order_update_threshold):
-            self._action_queue.put(CancelOrder(self.exchange_buy_on,
+            self._add_action_callback(CancelOrder(self.exchange_buy_on,
                                    self._live_limit_action.order.order_id))
 
     def _sanity_check_action(self, action):
@@ -191,7 +195,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             market_ask_action = CreateOrder(self.exchange_sell_on,
                                             Order.Side.ASK, Order.Type.MARKET,
                                             amount=fill_diff)
-            self._action_queue.put(self._sanity_check_action(market_ask_action))
+            self._add_action_callback(self._sanity_check_action(market_ask_action))
             # Store the order action, although I'm not sure if we will need them
             # again. Maybe for logging.
             self._market_orders_made.append(market_ask_action)
@@ -203,7 +207,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             bid_action = self._create_bid_limit_order(state)
             self._live_limit_action = bid_action
             self._previous_fill_amount = Decimal(0)
-            self._action_queue.put(self._sanity_check_action(bid_action))
+            self._add_action_callback(self._sanity_check_action(bid_action))
 
     def _create_bid_limit_order(self, data_slice):
         """Create the appropriate bid limit order action.

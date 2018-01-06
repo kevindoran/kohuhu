@@ -38,7 +38,7 @@ def sandbox_exchange():
 def test_get_balance(sandbox_exchange):
     """Get the balance and check that some BTC and USD are present."""
     sandbox_exchange.update_balance()
-    balance = sandbox_exchange.exchange_state().balance()
+    balance = sandbox_exchange.exchange_state.balance()
     assert balance
     assert balance.free("USD") > Decimal(0)
     assert balance.free("BTC") > Decimal(0)
@@ -121,7 +121,7 @@ async def live_sandbox_with_order_book(event_loop):
 async def test_market_buy(live_sandbox_exchange):
     """Executes a market bid and checks that the order is registered."""
     gemini = live_sandbox_exchange
-    exchange_state = gemini.exchange_state()
+    exchange_state = gemini.exchange_state
 
     bid_amount = Decimal("0.00001")
     bid_action = exchanges.CreateOrder("gemini_sandbox",
@@ -137,6 +137,6 @@ async def test_market_buy(live_sandbox_exchange):
 async def test_order_book(live_sandbox_with_order_book):
     """Insures the order book is populated after the gemini client starts up."""
     gemini = live_sandbox_with_order_book
-    exchange_state = gemini.exchange_state()
+    exchange_state = gemini.exchange_state
     success = await wait_until(lambda: len(exchange_state.order_book().asks()))
     assert success

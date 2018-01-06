@@ -204,20 +204,20 @@ class GeminiExchange(ExchangeClient):
     sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
 
     def __init__(self, sandbox=False):
-        self.request_retry_limit = 4
-        self.exchange_name = self.sandbox_exchange_name if sandbox \
+        exchange_id = self.sandbox_exchange_name if sandbox \
             else self.standard_exchange_name
+        super().__init__(exchange_id)
+        self.request_retry_limit = 4
         self._rest_url_base = self.sandbox_rest_url_base if sandbox \
             else self.standard_rest_url_base
         self._wss_url_base = self.sandbox_wss_url_base if sandbox \
             else self.standard_wss_url_base
-        self._exchange_state = ExchangeState(self.exchange_name, self)
+        self.exchange_state = ExchangeState(self.exchange_id, self)
         self._actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
         self._market_data_sock_info = self.SocketInfo()
         self._orders = {}
-        self._on_update_callback = None
 
     def _nonce(self):
         """"A nonce for the Gemini exchange API.
@@ -228,9 +228,6 @@ class GeminiExchange(ExchangeClient):
         # cause an issue.
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
         return int(delta.total_seconds() * 1000)
-
-    def set_on_change_callback(self, callback):
-        self._on_update_callback = callback
 
     def coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
@@ -249,7 +246,7 @@ class GeminiExchange(ExchangeClient):
         """Encode the payload for sending and calculate it's hash signature."""
         payload_bytes = json.dumps(dict_payload).encode(encoding)
         b64 = base64.b64encode(payload_bytes)
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         secret_bytes = creds.api_secret.encode(encoding)
         signature = hmac.new(secret_bytes, b64, sha384).hexdigest()
         return b64, signature
@@ -278,7 +275,7 @@ class GeminiExchange(ExchangeClient):
             'nonce': self._nonce()
         }
         payload.update(parameters)
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         b64, signature = self._encode_and_sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
@@ -300,7 +297,7 @@ class GeminiExchange(ExchangeClient):
         orders_path = '/v1/order/events'
         headers = self._create_headers(orders_path, encoding="utf-8")
         # Filter order events so that only events from this key are sent.
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         order_events_url = self._wss_url_base + orders_path + \
                            f'?heartbeat=true&apiSessionFilter={creds.api_key}'
 
@@ -371,8 +368,8 @@ class GeminiExchange(ExchangeClient):
                 callback(message)
             if not socket_info.queue.empty():
                 continue
-            if self._on_update_callback:
-                self._on_update_callback()
+            # Call all registered callbacks.
+            self.exchange_state.update_publisher.notify()
 
     @staticmethod
     def _check_sequence(response, socket_info):
@@ -436,10 +433,10 @@ class GeminiExchange(ExchangeClient):
             price = Decimal(event['price'])
             quantity = Decimal(event['remaining'])
             if side == 'bid':
-                self._exchange_state.order_book().set_bids_remaining(price,
+                self.exchange_state.order_book().set_bids_remaining(price,
                                                                     quantity)
             elif side == 'ask':
-                self._exchange_state.order_book().set_asks_remaining(price,
+                self.exchange_state.order_book().set_asks_remaining(price,
                                                                     quantity)
             else:
                 raise Exception("Unexpected update side: " + side)
@@ -463,7 +460,7 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("1 session filter should have been registered."
                                 f"{len(api_session_filter)} were registered.")
             accepted_key = api_session_filter[0]
-            if accepted_key != credentials.credentials_for(self.exchange_name)\
+            if accepted_key != credentials.credentials_for(self.exchange_id)\
                     .api_key:
                 raise Exception("The whitelisted api session key does not "
                                 "match our session key.")
@@ -472,17 +469,17 @@ class GeminiExchange(ExchangeClient):
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            existing_order = self._exchange_state.order(new_order.order_id)
+            existing_order = self.exchange_state.order(new_order.order_id)
             if existing_order:
                 raise Exception("An initial response was received for an "
                                 "existing order (id: {new_order.order_id}).")
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
         elif response_type == "accepted":
             # Create a new order. Mark the corresponding action as successful.
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
             for a in self._actions:
                 if id(a) == order_response.client_order_id:
@@ -503,7 +500,7 @@ class GeminiExchange(ExchangeClient):
             log.warning(f"An order was rejected. Reason: " + response['reason'])
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
             for a in self._actions:
                 if id(a) == order_response.client_order_id:
@@ -523,7 +520,7 @@ class GeminiExchange(ExchangeClient):
             log.info("Order booked. Order id:{response['order_id']}.")
         elif response_type == "fill":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             if not order:
                 raise Exception("Received a fill response for an unknown order "
                                 f"(id:{order_response.order_id}).")
@@ -534,7 +531,7 @@ class GeminiExchange(ExchangeClient):
             # is correct.
         elif response_type == "cancelled":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             reason = response.get('reason', 'No reason provided.')
             # Unused:
             # cancel_command_id = response.get('cancel_command_id', None)
@@ -563,7 +560,7 @@ class GeminiExchange(ExchangeClient):
             cancel_action.status = exchanges.Action.Status.FAILED
         elif response_type == "closed":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             if not order:
                 raise Exception("Received a close response for an unknown order"
                                 f" (id:{order_response.order_id}).")
@@ -573,12 +570,9 @@ class GeminiExchange(ExchangeClient):
         else:
             raise Exception(f"Unexpected response type: {response_type}.")
 
-    def exchange_state(self):
-        return self._exchange_state
-
     def execute_action(self, action):
         """Ren the given action on this exchange."""
-        if action.exchange != self.exchange_name:
+        if action.exchange != self.exchange_id:
             raise Exception(f"An action for exchange '{action.exchange}' was "
                             "given to GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
@@ -669,8 +663,8 @@ class GeminiExchange(ExchangeClient):
 
             free = available
             on_hold = amount - available
-            self._exchange_state.balance().set_free(currency, free)
-            self._exchange_state.balance().set_on_hold(currency, on_hold)
+            self.exchange_state.balance().set_free(currency, free)
+            self.exchange_state.balance().set_on_hold(currency, on_hold)
 
     def update_orders(self):
         # The orders are updated automatically.

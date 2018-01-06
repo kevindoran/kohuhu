@@ -82,7 +82,7 @@ def empty_data():
     td.state.add_exchange(td.exch_1_state)
     td.state.add_exchange(td.exch_2_state)
     td.action_queue = Queue()
-    td.algorithm.initialize(td.state, DummyTimer(), td.action_queue)
+    td.algorithm.initialize(td.state, DummyTimer(), td.action_queue.put)
     return td
 
 
