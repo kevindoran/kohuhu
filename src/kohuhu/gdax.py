@@ -22,7 +22,7 @@ class GdaxExchange(ExchangeClient):
         """Creates a new Gdax Exchange"""
         super().__init__()
         # Public attributes
-        self.exchange_state = ExchangeState('gdax', self)
+        self._exchange_state = ExchangeState('gdax', self)
 
         """Indicates that this exchange is both connected and has fully populated the orderbook"""
         self.order_book_ready = asyncio.Event()
@@ -63,6 +63,9 @@ class GdaxExchange(ExchangeClient):
                 self._process_websocket_messages())
         finally:
             await self._close_websocket()
+
+    def exchange_state(self):
+        return self._exchange_state
 
     async def _connect_websocket(self):
         """
@@ -267,12 +270,12 @@ class GdaxExchange(ExchangeClient):
             # gdax uses [price, quantity]
             bid_price = Decimal(bid[0])
             bid_quantity = Decimal(bid[1])
-            self.exchange_state.order_book().set_bids_remaining(bid_price, bid_quantity)
+            self._exchange_state.order_book().set_bids_remaining(bid_price, bid_quantity)
 
         for ask in asks:
             ask_price = Decimal(ask[0])
             ask_quantity = Decimal(ask[1])
-            self.exchange_state.order_book().set_asks_remaining(ask_price, ask_quantity)
+            self._exchange_state.order_book().set_asks_remaining(ask_price, ask_quantity)
 
         # After having received a snapshot response, we consider the exchange orderbook
         # to be ready.
@@ -287,9 +290,9 @@ class GdaxExchange(ExchangeClient):
             quantity = Decimal(change[2])
 
             if side == 'buy':
-                self.exchange_state.order_book().set_bids_remaining(price, quantity)
+                self._exchange_state.order_book().set_bids_remaining(price, quantity)
             elif side == 'sell':
-                self.exchange_state.order_book().set_asks_remaining(price, quantity)
+                self._exchange_state.order_book().set_asks_remaining(price, quantity)
             else:
                 raise Exception("Unexpected update side: " + side)
 
