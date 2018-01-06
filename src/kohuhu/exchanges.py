@@ -267,7 +267,7 @@ class ExchangeClient:
         self.exchange_id = exchange_id
         self.exchange_state = None
 
-    def coroutines(self):
+    def background_coroutines(self):
         """Creates and returns all coroutines to be run in the async loop."""
         return NotImplementedError("Subclasses must implement this function.")
 

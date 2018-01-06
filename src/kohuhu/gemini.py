@@ -230,7 +230,7 @@ class GeminiExchange(ExchangeClient):
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
         return int(delta.total_seconds() * 1000)
 
-    def coroutines(self):
+    def background_coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
         orders_receive_coro = self._listen_on_orders()
         market_data_receive_coro = self._listen_on_market_data()

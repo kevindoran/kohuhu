@@ -61,7 +61,7 @@ def test_get_balance(sandbox_exchange):
 async def live_sandbox_exchange(event_loop):
     gemini = GeminiExchange(sandbox=True)
     await gemini.open_orders_websocket()
-    coroutines = gemini.coroutines()
+    coroutines = gemini.background_coroutines()
     tasks = []
     for c in coroutines:
         t = asyncio.ensure_future(c, loop=event_loop)
@@ -91,7 +91,7 @@ async def live_sandbox_with_order_book(event_loop):
     gemini = GeminiExchange(sandbox=True)
     await gemini.open_orders_websocket()
     await gemini.open_market_data_websocket()
-    coroutines = gemini.coroutines()
+    coroutines = gemini.background_coroutines()
     tasks = []
     for c in coroutines:
         t = asyncio.ensure_future(c, loop=event_loop)
