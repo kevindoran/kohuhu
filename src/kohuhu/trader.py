@@ -94,6 +94,11 @@ class Trader:
         """Adds an action to the action queue."""
         self.action_queue.put_nowait(action)
 
+    def log_updates(self):
+        print("Update received.")
+        # TODO: How to print with logging?
+        #log.info("Update received.")
+
     async def _process_actions(self):
         """Call exchange_client.execute() for each action created by the algo.
         """
@@ -117,15 +122,15 @@ class Trader:
         set directly.
         """
         for e in self.exchanges:
-            self.state.add_exchange(e.exchange_state())
-            coroutines_for_exchange = e.coroutines()
+            self.state.add_exchange(e.exchange_state)
+            e.exchange_state.update_publisher.add_callback(self.log_updates)
             coroutines_for_exchange = e.background_coroutines()
             for c in coroutines_for_exchange:
                 self._tasks.append(asyncio.ensure_future(c))
             self._tasks.append(asyncio.ensure_future(e.open_connections()))
 
         self._tasks.extend(self._timer.tasks)
-        self._tasks.append(asyncio.ensure_future(self._process_actions))
+        self._tasks.append(asyncio.ensure_future(self._process_actions()))
         self._loop = asyncio.get_event_loop()
         try:
             # Run the tasks. If everything works well, this will run forever.
@@ -173,5 +178,6 @@ if __name__ == "__main__":
     from kohuhu.gemini import GeminiExchange
     import kohuhu.credentials as credentials
     credentials.load_credentials()
+    # Start the trader without any algorithm set.
     trader = Trader(algorithm=None, exchanges=[GeminiExchange(sandbox=True)])
     trader.start()
