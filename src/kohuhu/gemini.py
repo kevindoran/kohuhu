@@ -345,22 +345,28 @@ class GeminiExchange(ExchangeClient):
     async def _listen_on_orders(self):
         """Listen on the orders websocket for updates to our orders."""
         await self._orders_sock_info.connected_event.wait()
-        async for message in self._orders_sock_info.ws:
-            if self._orders_sock_info.queue.qsize() >= 100:
-                log.warning("Websocket message queue is has "
-                            f"{self._orders_sock_info.queue.qsize()} pending "
-                            "messages.")
-            await self._orders_sock_info.queue.put(message)
+        try:
+            async for message in self._orders_sock_info.ws:
+                if self._orders_sock_info.queue.qsize() >= 100:
+                    log.warning("Websocket message queue is has "
+                                f"{self._orders_sock_info.queue.qsize()} pending "
+                                "messages.")
+                await self._orders_sock_info.queue.put(message)
+        finally:
+            await self._orders_sock_info.ws.close()
 
     async def _listen_on_market_data(self):
         """Listen on the market websocket for order book updates."""
         await self._market_data_sock_info.connected_event.wait()
-        async for message in self._market_data_sock_info.ws:
-            if self._market_data_sock_info.queue.qsize() >= 100:
-                log.warning("Websocket message queue is has "
-                            f"{self._market_data_sock_info.queue.qsize()} pending"
-                            " messages.")
-            await self._market_data_sock_info.queue.put(message)
+        try:
+            async for message in self._market_data_sock_info.ws:
+                if self._market_data_sock_info.queue.qsize() >= 100:
+                    log.warning("Websocket message queue is has "
+                                f"{self._market_data_sock_info.queue.qsize()} pending"
+                                " messages.")
+                await self._market_data_sock_info.queue.put(message)
+        finally:
+            await self._market_data_sock_info.ws.close()
 
     async def _process_queue(self, callback, socket_info,
                              has_heartbeat_seq=True):
