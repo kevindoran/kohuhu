@@ -13,11 +13,6 @@ from kohuhu.custom_exceptions import InvalidOperationError
 log = logging.getLogger(__name__)
 
 
-class OrderResponse:
-    def __init__(self):
-        pass
-
-
 class GdaxExchange(ExchangeClient):
     default_websocket_url = 'wss://ws-feed.gdax.com'
 
@@ -26,23 +21,25 @@ class GdaxExchange(ExchangeClient):
                  websocket_url=default_websocket_url):
         """Creates a new Gdax Exchange"""
         super().__init__()
-        self.websocket_url = websocket_url
-
+        # Public attributes
         self.exchange_state = ExchangeState('gdax', self)
-        self.channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
-        self.symbol = 'BTC-USD'
 
-        self.websocket = None
-        self.message_queue = asyncio.Queue()
+        """Indicates that this exchange is both connected and has fully populated the orderbook"""
+        self.order_book_ready = asyncio.Event()
+
+        # Private attributes
+        self._websocket_url = websocket_url
+        self._channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
+        self._symbol = 'BTC-USD'
+        self._websocket = None
+        self._message_queue = asyncio.Queue()
         self._on_update_callback = None
 
-        # Authentication attributes
-        self.api_credentials = api_credentials
-        self.authenticate = self.api_credentials is not None
+        self._api_credentials = api_credentials
+        self._authenticate = self._api_credentials is not None
 
-        # Websocket sequence check attributes
-        self.received_message_count = 0
-        self.last_sequence_number = None
+        self._received_message_count = 0
+        self._last_sequence_number = None
 
     def set_on_change_callback(self, callback):
         """Sets the callback that is invoked when the state of the exchange
@@ -72,38 +69,32 @@ class GdaxExchange(ExchangeClient):
         Open the websocket feed to Gdax for all market data updates, orders
         and trades. Gdax uses a single websocket to feed all information.
         """
-        try:
-            self.websocket = await websockets.connect(self.websocket_url)
+        self._websocket = await websockets.connect(self._websocket_url)
 
-            subscribe_message = json.dumps(self._build_subscribe_parameters())
-
-            # We must send a subscribe message within 5 seconds of opening the websocket
-            await self.websocket.send(subscribe_message)
-
-        except websockets.exceptions.InvalidStatusCode as ex:
-            if str(ex.status_code).startswith("5"):
-                log.error("Exchange offline")
+        # We must send a subscribe message within 5 seconds of opening the websocket
+        subscribe_message = json.dumps(self._build_subscribe_parameters())
+        await self._websocket.send(subscribe_message)
 
     async def _close_websocket(self):
         """Closes the websocket connection"""
-        if self.websocket is not None:
-            await self.websocket.close()
+        if self._websocket is not None:
+            await self._websocket.close()
 
     async def _listen_websocket_feed(self):
         """
         Listen for all market data updates, orders, and trades.
         Gdax uses a single websocket to feed all information.
         """
-        if self.websocket is None:
+        if self._websocket is None:
             raise InvalidOperationError("Websocket is not connected. You must call "
                                         "connect_websocket() before listening on the "
                                         "websocket channel.")
         try:
             # This blocks waiting for a new websocket message
-            async for message in self.websocket:
-                if self.message_queue.qsize() >= 100:
-                    log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
-                await self.message_queue.put(message)
+            async for message in self._websocket:
+                if self._message_queue.qsize() >= 100:
+                    log.warning(f"Websocket message queue is has {self._message_queue.qsize()} pending messages")
+                await self._message_queue.put(message)
         except websockets.exceptions.InvalidStatusCode as ex:
             if str(ex.status_code).startswith("5"):
                 log.error("Exchange offline")
@@ -116,11 +107,11 @@ class GdaxExchange(ExchangeClient):
         """
         subscribe_params = {
             'type': 'subscribe',
-            'product_ids': [self.symbol],
-            'channels': self.channels
+            'product_ids': [self._symbol],
+            'channels': self._channels
         }
 
-        if self.authenticate:
+        if self._authenticate:
             subscribe_params.update(self._build_authenticate_parameters())
 
         return subscribe_params
@@ -134,26 +125,29 @@ class GdaxExchange(ExchangeClient):
         timestamp = str(time.time())
         message = timestamp + 'GET' + '/users/self/verify'
         message = message.encode('ascii')
-        hmac_key = base64.b64decode(self.api_credentials.api_secret)
+        hmac_key = base64.b64decode(self._api_credentials.api_secret)
         signature = hmac.new(hmac_key, message, hashlib.sha256)
         signature_b64 = base64.b64encode(signature.digest()).decode('utf-8')
 
         auth_params = {
             'signature': signature_b64,
-            'key': self.api_credentials.api_key,
-            'passphrase': self.api_credentials.passphrase,
+            'key': self._api_credentials.api_key,
+            'passphrase': self._api_credentials.passphrase,
             'timestamp': timestamp
         }
 
         return auth_params
 
     async def _process_websocket_messages(self):
-        """TODO"""
+        """Processes messages added to the message queue by the websocket task. This calls
+        the _handle_message() method for each message then calls the _on_update_callback().
+        If multiple messages are received at once (or in a short interval), _on_update_callback
+        will only be called once"""
         while True:
-            message = await self.message_queue.get()
-            self.received_message_count += 1
+            message = await self._message_queue.get()
+            self._received_message_count += 1
             self._handle_message(message)
-            if not self.message_queue.empty():
+            if not self._message_queue.empty():
                 # If we've already got another update, then update our
                 # orderbook before we call the callback.
                 continue
@@ -207,25 +201,26 @@ class GdaxExchange(ExchangeClient):
         messages that we have received over the websocket channel.
         If there is a mismatch, an exception will be raised.
         """
+        log.debug("Received heartbeat message")
         current_sequence_number = heartbeat['sequence']
 
         # If this is the first heartbeat, start counting websocket messages from now.
-        if self.last_sequence_number is None:
-            self.last_sequence_number = current_sequence_number
-            self.received_message_count = 0
+        if self._last_sequence_number is None:
+            self._last_sequence_number = current_sequence_number
+            self._received_message_count = 0
             return
 
         # Otherwise check that the difference in the sequence numbers matches our count.
-        expected_messages_received = current_sequence_number - self.last_sequence_number
-        if expected_messages_received != self.received_message_count:
+        expected_messages_received = current_sequence_number - self._last_sequence_number
+        if expected_messages_received != self._received_message_count:
             error_message = f"Expected {expected_messages_received} but only received " \
-                            f"{self.received_message_count} since last heartbeat"
+                            f"{self._received_message_count} since last heartbeat"
             log.error(error_message)
             raise Exception(error_message)
 
         # Reset the counts for the next heartbeat
-        self.last_sequence_number = current_sequence_number
-        self.received_message_count = 0
+        self._last_sequence_number = current_sequence_number
+        self._received_message_count = 0
 
     def _handle_order(self, order):
         """TODO"""
@@ -236,13 +231,13 @@ class GdaxExchange(ExchangeClient):
         log.debug("Received subscription acknowledgement message")
 
         channels = subscriptions['channels']
-        if len(channels) != len(self.channels):
+        if len(channels) != len(self._channels):
             err_msg = f"Received unexpected channels: {channels}"
             raise Exception(err_msg)
 
         for channel in channels:
             channel_name = channel['name']
-            if channel_name not in self.channels:
+            if channel_name not in self._channels:
                 err_msg = f"Received an unexpected channel: {channel}"
                 log.error(err_msg)
                 raise Exception(err_msg)
@@ -252,7 +247,7 @@ class GdaxExchange(ExchangeClient):
             if len(channel_symbols) != 1:
                 err_msg = f"Received unexpected symbols: {channel_symbols} for channel {channel_name}"
                 raise Exception(err_msg)
-            if channel_symbols[0] != self.symbol:
+            if channel_symbols[0] != self._symbol:
                 err_msg = f"Received unexpected symbol: {channel_symbols[0]} for channel {channel_name}"
                 raise Exception(err_msg)
 
@@ -278,6 +273,10 @@ class GdaxExchange(ExchangeClient):
             ask_price = Decimal(ask[0])
             ask_quantity = Decimal(ask[1])
             self.exchange_state.order_book().set_asks_remaining(ask_price, ask_quantity)
+
+        # After having received a snapshot response, we consider the exchange orderbook
+        # to be ready.
+        self.order_book_ready.set()
 
     def _handle_l2_update(self, order_book_update):
         """TODO"""
@@ -340,7 +339,13 @@ print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook upd
 gdax = GdaxExchange()
 gdax.set_on_change_callback(on_data)
 
+async def send_orders_when_ready():
+    print("Order book not yet ready")
+    await gdax.order_book_ready.wait()
+    print("Order book is now ready")
+
 try:
+    asyncio.ensure_future(send_orders_when_ready())
     loop.run_until_complete(gdax.run())
 finally:
     loop.stop()
