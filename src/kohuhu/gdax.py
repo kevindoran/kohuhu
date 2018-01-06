@@ -8,7 +8,7 @@ import time
 import base64
 import hmac
 import hashlib
-from enum import Enum
+from kohuhu.custom_exceptions import InvalidOperationError
 
 log = logging.getLogger(__name__)
 
@@ -19,12 +19,20 @@ class OrderResponse:
 
 
 class GdaxExchange(ExchangeClient):
-    def __init__(self, api_credentials=None):
+    default_websocket_url = 'wss://ws-feed.gdax.com'
+
+    def __init__(self,
+                 api_credentials=None,
+                 websocket_url=default_websocket_url):
         """Creates a new Gdax Exchange"""
         super().__init__()
-        self.exchange_state = ExchangeState("gdax", self)
+        self.websocket_url = websocket_url
+
+        self.exchange_state = ExchangeState('gdax', self)
         self.channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
         self.symbol = 'BTC-USD'
+
+        self.websocket = None
         self.message_queue = asyncio.Queue()
         self._on_update_callback = None
 
@@ -41,30 +49,61 @@ class GdaxExchange(ExchangeClient):
         changes. For example, the order book is updated, or an order is filled."""
         self._on_update_callback = callback
 
-    def initialize(self):
-        """TODO"""
-        market_data_receive_task = self._open_websocket_feed
-        process_market_data_task = self._process_websocket_messages
-
-        return market_data_receive_task, process_market_data_task
-
-    async def _open_websocket_feed(self):
+    async def run(self):
         """
-        Open the websocket feed to Gdax` and listen for all market data updates
-        for orders and trades. Gdax uses a single websocket to feed all information.
+        Run this Gdax exchange, listening for and processing websocket messages.
+
+        Usage:
+            loop.run_until_complete(gdax.run())
         """
         try:
-            async with websockets.connect('wss://ws-feed.gdax.com') as websocket:
-                subscribe_message = json.dumps(self._build_subscribe_parameters())
+            # Open our websocket
+            await self._connect_websocket()
 
-                # We must send a subscribe message within 5 seconds of opening the websocket
-                await websocket.send(subscribe_message)
+            # Group our background coroutines into a single task and wait on this
+            await asyncio.gather(
+                self._listen_websocket_feed(),
+                self._process_websocket_messages())
+        finally:
+            await self._close_websocket()
 
-                # This blocks waiting for a new websocket message
-                async for message in websocket:
-                    if self.message_queue.qsize() >= 100:
-                        log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
-                    await self.message_queue.put(message)
+    async def _connect_websocket(self):
+        """
+        Open the websocket feed to Gdax for all market data updates, orders
+        and trades. Gdax uses a single websocket to feed all information.
+        """
+        try:
+            self.websocket = await websockets.connect(self.websocket_url)
+
+            subscribe_message = json.dumps(self._build_subscribe_parameters())
+
+            # We must send a subscribe message within 5 seconds of opening the websocket
+            await self.websocket.send(subscribe_message)
+
+        except websockets.exceptions.InvalidStatusCode as ex:
+            if str(ex.status_code).startswith("5"):
+                log.error("Exchange offline")
+
+    async def _close_websocket(self):
+        """Closes the websocket connection"""
+        if self.websocket is not None:
+            await self.websocket.close()
+
+    async def _listen_websocket_feed(self):
+        """
+        Listen for all market data updates, orders, and trades.
+        Gdax uses a single websocket to feed all information.
+        """
+        if self.websocket is None:
+            raise InvalidOperationError("Websocket is not connected. You must call "
+                                        "connect_websocket() before listening on the "
+                                        "websocket channel.")
+        try:
+            # This blocks waiting for a new websocket message
+            async for message in self.websocket:
+                if self.message_queue.qsize() >= 100:
+                    log.warning(f"Websocket message queue is has {self.message_queue.qsize()} pending messages")
+                await self.message_queue.put(message)
         except websockets.exceptions.InvalidStatusCode as ex:
             if str(ex.status_code).startswith("5"):
                 log.error("Exchange offline")
@@ -301,54 +340,8 @@ print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook upd
 gdax = GdaxExchange()
 gdax.set_on_change_callback(on_data)
 
-# Create tasks to listen to the websocket
-# gemini_websocket_listener_task = asyncio.ensure_future(gemini.initialize())
-web_task, process_task = gdax.initialize()
-gdax_websocket_listener_task = asyncio.ensure_future(web_task())
-
-# Create tasks to process new updates
-# gemini_processor_task = asyncio.ensure_future(gemini.process_queue())
-gdax_processor_task = asyncio.ensure_future(process_task())
-
-tasks = [
-            # gemini_websocket_listener_task,
-            # gemini_processor_task,
-            gdax_websocket_listener_task,
-            gdax_processor_task
-        ]
-
-
 try:
-    # Run our tasks - if everything functions well, this will run forever.
-    finished, pending = loop.run_until_complete(asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION))
-
-    # If we've got here, then a task has throw an exception.
-
-    # Finished task(s) have thrown an exception. Let's observe the task to log the exception.
-    for task in finished:
-        try:
-            task.result()
-        except Exception as ex:
-            log.exception(ex)
-
-    # Pending tasks are still running, attempt to gracefully cancel them all.
-    for task in pending:
-        task.cancel()
-
-    # Wait for up to 2 seconds for the tasks to gracefully return
-    finished_cancelled_tasks, pending_cancelled_tasks = loop.run_until_complete(asyncio.wait(pending, timeout=2))
-    try:
-        # They most like finished because we told them to cancel, when we observe them we'll catch
-        # the asyncio.CancelledError.
-        for task in finished_cancelled_tasks:
-            task.result()
-
-        # If a task is still pending it hasn't finished cleaning up in the timeout period
-        # and you'll see: "Task was destroyed but it is pending" as we forcefully kill it.
-    except asyncio.CancelledError:
-        pass
-        # If a task does not have an outer try..except that catches CancelledError then
-        # t.result() will raise a CancelledError. This is fine.
+    loop.run_until_complete(gdax.run())
 finally:
     loop.stop()
     loop.close()
