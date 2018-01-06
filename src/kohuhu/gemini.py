@@ -194,6 +194,7 @@ class GeminiExchange(ExchangeClient):
             self.seq = 0
             self.heartbeat_timestamp_ms = None
             self.ws = None
+            self.connected_event = asyncio.Event()
             self.queue = asyncio.Queue()
 
     standard_exchange_name = "gemini"
@@ -304,12 +305,7 @@ class GeminiExchange(ExchangeClient):
         # Uncommented until we have the orders websocket working correctly.
         self._orders_sock_info.ws = await websockets.client.connect(
             order_events_url, extra_headers=headers)
-
-    async def close_orders_websocket(self):
-        await self._orders_sock_info.ws.close()
-
-    async def close_market_data_websocket(self):
-        await self._market_data_sock_info.ws.close()
+        self._orders_sock_info.connected_event.set()
 
     async def open_market_data_websocket(self):
         """Opens the websocket for getting market data.
@@ -322,9 +318,17 @@ class GeminiExchange(ExchangeClient):
                           '/v1/marketdata/BTCUSD?heartbeat=true'
         self._market_data_sock_info.ws = await websockets.client.connect(
             market_data_url)
+        self._market_data_sock_info.connected_event.set()
+
+    async def close_orders_websocket(self):
+        await self._orders_sock_info.ws.close()
+
+    async def close_market_data_websocket(self):
+        await self._market_data_sock_info.ws.close()
 
     async def _listen_on_orders(self):
         """Listen on the orders websocket for updates to our orders."""
+        await self._orders_sock_info.connected_event.wait()
         async for message in self._orders_sock_info.ws:
             if self._orders_sock_info.queue.qsize() >= 100:
                 log.warning("Websocket message queue is has "
@@ -334,6 +338,7 @@ class GeminiExchange(ExchangeClient):
 
     async def _listen_on_market_data(self):
         """Listen on the market websocket for order book updates."""
+        await self._market_data_sock_info.connected_event.wait()
         async for message in self._market_data_sock_info.ws:
             if self._market_data_sock_info.queue.qsize() >= 100:
                 log.warning("Websocket message queue is has "
