@@ -419,9 +419,11 @@ class GeminiExchange(ExchangeClient):
         # Unused response data:
         # trace_id is used fo logging. No use for it yet.
         #trace_id = response['trade_id']
-        if socket_seq == 0:
-            raise Exception("The heartbeat should never be the first message to"
-                            "start the socket sequence.")
+        # Update: It looks like heatbeats can hold the first socket sequence.
+        # Delete below lines when we are sure.
+        #if socket_seq == 0:
+        #    raise Exception("The heartbeat should never be the first message to"
+        #                    "start the socket sequence.")
         if heartbeat_seq != socket_info.heartbeat_seq:
             raise Exception("We have missed a heartbeat sequence. The previous "
                             f"sequence was {socket_info.heartbeat_seq} and the "
