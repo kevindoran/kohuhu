@@ -58,6 +58,9 @@ class OrderBook:
     def asks(self):
         return self._asks.keys()
 
+    def bids(self):
+        return self._bids.keys()
+
 
 class BidPricePair:
     """A price, amount tuple. So we never mix up the order."""

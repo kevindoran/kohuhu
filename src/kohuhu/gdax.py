@@ -9,6 +9,7 @@ import base64
 import hmac
 import hashlib
 from kohuhu.custom_exceptions import InvalidOperationError
+import asyncio
 
 log = logging.getLogger(__name__)
 
@@ -33,13 +34,19 @@ class GdaxExchange(ExchangeClient):
         self._symbol = 'BTC-USD'
         self._websocket = None
         self._message_queue = asyncio.Queue()
-        self._on_update_callback = None
+        self._on_update_callback = lambda: None
+        self._background_tasks = None
 
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
 
         self._received_message_count = 0
         self._last_sequence_number = None
+
+        self._running = False
+
+    async def _check_if_should_stop(self):
+        await self._should_stop.wait()
 
     def set_on_change_callback(self, callback):
         """Sets the callback that is invoked when the state of the exchange
@@ -58,11 +65,28 @@ class GdaxExchange(ExchangeClient):
             await self._connect_websocket()
 
             # Group our background coroutines into a single task and wait on this
-            await asyncio.gather(
+            self._background_tasks = asyncio.gather(
                 self._listen_websocket_feed(),
                 self._process_websocket_messages())
+
+            self._running = True
+            try:
+                await self._background_tasks
+            except asyncio.CancelledError:
+                # A cancelled error is expected if we've called stop(). Confirm
+                # this is the case by checking if we are still running.
+                if self._running:
+                    raise
+                else:
+                    pass
         finally:
             await self._close_websocket()
+
+    async def stop(self):
+        """Stop all background tasks and close the websocket"""
+        self._running = False
+        self._background_tasks.cancel()
+        await self._close_websocket()
 
     def exchange_state(self):
         return self._exchange_state
@@ -298,58 +322,59 @@ class GdaxExchange(ExchangeClient):
 
 
 
-last_printed_percent = Decimal(10)
-def on_data():
-    # Update slice
-    # Call algorithm
 
-    global last_printed_percent
+if __name__ == "main":
+    last_printed_percent = Decimal(10)
+    def on_data():
+        # Update slice
+        # Call algorithm
 
-
-    #gdax_best_bid = gdax.exchange_stateorder_book.bids.iloc[0]
-
-    # Can we buy on gemini & sell on gdax for a profit?
-    diff = Decimal(16000) - 15000
-    percent = diff / 15000 * 100
-
-    if abs(percent - last_printed_percent) > 0.01:
-        last_printed_percent = percent
-        print("")
-        if percent > 0:
-            print(f"Profit! Difference is: {percent:.2f}")
-        else:
-            print(f":( Difference is: {percent:.2f}")
+        global last_printed_percent
 
 
-def exchange_offline(message):
-    # Do something!
-    print(message)
+        #gdax_best_bid = gdax.exchange_stateorder_book.bids.iloc[0]
 
-# Main event loop
-import asyncio
-loop = asyncio.get_event_loop()
+        # Can we buy on gemini & sell on gdax for a profit?
+        diff = Decimal(16000) - 15000
+        percent = diff / 15000 * 100
+
+        if abs(percent - last_printed_percent) > 0.01:
+            last_printed_percent = percent
+            print("")
+            if percent > 0:
+                print(f"Profit! Difference is: {percent:.2f}")
+            else:
+                print(f":( Difference is: {percent:.2f}")
 
 
-from kohuhu import credentials
-credentials.load_credentials("../../api_credentials.json")
-creds = credentials.credentials_for('gdax')
+    def exchange_offline(message):
+        # Do something!
+        print(message)
+
+    # Main event loop
+    loop = asyncio.get_event_loop()
 
 
-# Create our exchanges, these take an on_data callback every time the order book is updated
-# print("Connecting to gemini orderbook websocket. Every '*' is a gemini orderbook update.")
-# gemini = GeminiExchange(on_data, exchange_offline)
-print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook update.")
-gdax = GdaxExchange()
-gdax.set_on_change_callback(on_data)
+    from kohuhu import credentials
+    credentials.load_credentials("../../api_credentials.json")
+    creds = credentials.credentials_for('gdax')
 
-async def send_orders_when_ready():
-    print("Order book not yet ready")
-    await gdax.order_book_ready.wait()
-    print("Order book is now ready")
 
-try:
-    asyncio.ensure_future(send_orders_when_ready())
-    loop.run_until_complete(gdax.run())
-finally:
-    loop.stop()
-    loop.close()
+    # Create our exchanges, these take an on_data callback every time the order book is updated
+    # print("Connecting to gemini orderbook websocket. Every '*' is a gemini orderbook update.")
+    # gemini = GeminiExchange(on_data, exchange_offline)
+    print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook update.")
+    gdax = GdaxExchange()
+    gdax.set_on_change_callback(on_data)
+
+    async def send_orders_when_ready():
+        print("Order book not yet ready")
+        await gdax.order_book_ready.wait()
+        print("Order book is now ready")
+
+    try:
+        asyncio.ensure_future(send_orders_when_ready())
+        loop.run_until_complete(gdax.run())
+    finally:
+        loop.stop()
+        loop.close()
