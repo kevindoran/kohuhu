@@ -320,6 +320,22 @@ class GeminiExchange(ExchangeClient):
             market_data_url)
         self._market_data_sock_info.connected_event.set()
 
+    async def open_connections(self):
+        await self.open_market_data_websocket()
+        await self.open_orders_websocket()
+
+    async def setup_event(self):
+        """Waits for both connections to be open.
+
+        Use this co-routine to wait until the Gemini exchange client is setup.
+        Using this co-routine is an alternative to waiting synchronously on
+        open_connections().
+        """
+        await self._market_data_sock_info.connected_event.wait()
+        await self._orders_sock_info.connected_event.wait()
+
+    # I'm not sure if these two close methods ar needed when the try:finally
+    # block is used in the listen methods.
     async def close_orders_websocket(self):
         await self._orders_sock_info.ws.close()
 

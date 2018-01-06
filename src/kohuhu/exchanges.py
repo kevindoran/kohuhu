@@ -271,6 +271,10 @@ class ExchangeClient:
         """Creates and returns all coroutines to be run in the async loop."""
         return NotImplementedError("Subclasses must implement this function.")
 
+    # Note: I'm not sure how best to open and close the connections.
+    async def open_connections(self):
+        return NotImplementedError("Subclasses must implement this function.")
+
     def update_order_book(self):
         """Retrieve the latest order book information."""
         return NotImplementedError("Subclasses must implement this function.")

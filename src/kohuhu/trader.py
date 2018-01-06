@@ -122,6 +122,7 @@ class Trader:
             coroutines_for_exchange = e.background_coroutines()
             for c in coroutines_for_exchange:
                 self._tasks.append(asyncio.ensure_future(c))
+            self._tasks.append(asyncio.ensure_future(e.open_connections()))
 
         self._tasks.extend(self._timer.tasks)
         self._tasks.append(asyncio.ensure_future(self._process_actions))
