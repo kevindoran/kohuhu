@@ -278,8 +278,6 @@ class GeminiExchange(ExchangeClient):
 
     def run_task(self):
         """Returns the future for running the Gemini exchange client."""
-        orders_receive_coro = self._listen_on_orders()
-        market_data_receive_coro = self._listen_on_market_data()
         process_orders_coro = self._process_queue(callback=self._handle_orders,
                                 socket_info=self._orders_sock_info)
         process_market_data_coro = self._process_queue(
@@ -287,22 +285,22 @@ class GeminiExchange(ExchangeClient):
                                 socket_info=self._market_data_sock_info,
                                 has_heartbeat_seq=False)
 
-        async def run_orders():
+        async def listen_orders():
             try:
                 await self._open_orders_websocket()
-                await orders_receive_coro
+                await self._listen_on_orders()
             finally:
                 await self._orders_sock_info.ws.close()
 
-        async def run_market_data():
+        async def listen_market_data():
             try:
                 await self._open_market_data_websocket()
-                await market_data_receive_coro
+                await self._listen_on_market_data()
             finally:
                 await self._market_data_sock_info.ws.close()
 
-        return asyncio.gather(run_orders(), process_orders_coro,
-                              run_market_data(), process_market_data_coro)
+        return asyncio.gather(listen_orders(), process_orders_coro,
+                              listen_market_data(), process_market_data_coro)
 
     async def _open_orders_websocket(self):
         """Opens the websocket for getting our order details.
