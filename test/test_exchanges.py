@@ -1,10 +1,14 @@
 import pytest
-from kohuhu import exchanges
+from kohuhu import exchanges_old
 from kohuhu import credentials
 import decimal
 from decimal import Decimal
 
 
+pytestmark = pytest.mark.skipif(True,
+    reason="These tests are interfering with gemini tests due to nonces.")
+
+# interference.
 @pytest.fixture(autouse=True)
 def load_creds():
     credentials.load_credentials()
@@ -23,7 +27,7 @@ def test_fee_as_factor():
     #
     # We use the context here to make it easy to compare the two decimals at
     # a precision. Alternatively, we could just use quantize instead.
-    factor = exchanges.fee_as_factor(fee)
+    factor = exchanges_old.fee_as_factor(fee)
     expected_factor = Decimal(1) / Decimal(1.01)
     with decimal.localcontext(decimal.BasicContext):
         # Round the decimals to the precision of this context.
@@ -41,7 +45,7 @@ def test_fee_as_percentage():
     # A fee factor of 0.9 on a transaction of 100 means that a 10 unit fee will
     # be charged leaving 90 units remaining. As a percentage of the final
     # transaction value (90), the fee percentage is 10/90 = 1/9 = 0.1111 (4dp).
-    fee = exchanges.fee_as_percentage(fee_factor)
+    fee = exchanges_old.fee_as_percentage(fee_factor)
     expected_fee = Decimal(1) / Decimal(9)
     with decimal.localcontext(decimal.BasicContext):
         # Round the decimals to the precision of this context.
@@ -51,7 +55,7 @@ def test_fee_as_percentage():
 
 
 def test_fees():
-    fees = exchanges.fees('gdax')
+    fees = exchanges_old.fees('gdax')
     # This is a bit of a stupid test, as we might as well hard-code the values.
     # However, I'm doing this as I would like to be notified if the fees for
     # gdax change.
@@ -60,11 +64,11 @@ def test_fees():
 
     # Make sure it fails for fees that we don't know.
     with pytest.raises(Exception):
-        fees = exchanges.fees('cryptopedia')
+        fees = exchanges_old.fees('cryptopedia')
 
 
 def test_btc_market_spread():
-    market_spread = exchanges.btc_market_spread('gdax')
+    market_spread = exchanges_old.btc_market_spread('gdax')
     # These isn't much that can be tested.
     # I think we can safely assume that there should always be at least one
     # bid and one ask.
@@ -81,7 +85,7 @@ def test_btc_market_spread():
 
 @pytest.mark.skip(reason="Gdax sandbox seems to be down.")
 def test_get_balance():
-    gdax_sandbox = exchanges.load_exchange("gdax_sandbox")
+    gdax_sandbox = exchanges_old.load_exchange("gdax_sandbox")
     # I'm not sure when the sandbox balance will change from zero.
     balance_json = gdax_sandbox.fetch_balance()
     assert Decimal(balance_json['BTC']['free']) == Decimal(0)
@@ -91,8 +95,8 @@ def test_get_balance():
 #@pytest.mark.parametrize("exchange_id", [#"gdax_sandbox",
 #                                         "gemini_sandbox"])
 def test_make_limit_buy_order_gemini():
-    exchange = exchanges.load_exchange("gemini_sandbox",
-                                       with_authorization=True)
+    exchange = exchanges_old.load_exchange("gemini_sandbox",
+                                           with_authorization=True)
     amount_in_btc = 0.2
     price = 5000
     res = exchange.create_limit_buy_order('BTC/USD', amount_in_btc, 5000)

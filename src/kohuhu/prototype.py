@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 from enum import Enum
 from decimal import Decimal
-import kohuhu.exchanges as exchanges
+import kohuhu.exchanges_old as exchanges
 
 
 class LimitAction:

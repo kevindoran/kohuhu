@@ -8,25 +8,9 @@ import operator
 from decimal import Decimal
 import logging
 
+
 log = logging.getLogger(__name__)
 
-# bids is a dict of {price:quantity}
-class OrderBook:
-    """Represents an order book
-
-    Attributes:
-        timestamp (datetime): UTC time of when the order book was last updated.
-        bids ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
-            key:value pairs. The first element contains the highest bid. Both price and
-            quantity are Decimals.
-        asks ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
-            key:value pairs. The first element contains the lowest ask. Both price and
-            quantity are Decimals.
-    """
-    def __init__(self, timestamp, bids, asks):
-        self.timestamp = timestamp
-        self.bids = bids
-        self.asks = asks
 
 
 class Exchange:
@@ -300,6 +284,9 @@ def exchange_offline(message):
     print(message)
     #raise Exception("Exchange offline")
 
+
+
+# The following has moved to trader.py:
 
 # Main event loop
 loop = asyncio.get_event_loop()

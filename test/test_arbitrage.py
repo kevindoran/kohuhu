@@ -1,11 +1,16 @@
 import pytest
 from kohuhu.arbitrage import OneWayPairArbitrage
 import kohuhu.trader as trader
-from kohuhu.trader import CreateOrder
+from kohuhu.exchanges import CreateOrder
+from kohuhu.exchanges import Order
+from kohuhu.exchanges import CancelOrder
+from kohuhu.exchanges import Action
+from kohuhu.exchanges import ExchangeState
 import decimal
 import kohuhu.currency as currency
 from decimal import Decimal
-
+from queue import Queue
+import logging
 
 # It doesn't actually used these exchanges. The exchanges just have to be
 # something for which we have fee data.
@@ -13,18 +18,55 @@ bid_on_exchange = 'gdax_sandbox'
 ask_on_exchange = 'gemini_sandbox'
 
 
+class DummyTimer:
+    def do_every(self, delta, callback):
+        pass
+
+
+def create_bid_limit_order(id, price, amount):
+    order = Order()
+    order.order_id = id
+    order.price = price
+    order.amount = amount
+    order.side = Order.Side.BID
+    order.type = Order.Type.LIMIT
+    order.filled = Decimal(0)
+    order.remaining = amount
+    order.status = Order.Status.OPEN
+    return order
+
+
+def create_market_ask_order(id, amount):
+    order = Order()
+    order.id = id
+    order.type = Order.Type.MARKET
+    order.side = Order.Side.BID
+    order.filled = Decimal(0)
+    order.remaining = amount
+    order.status = Order.Status.OPEN
+    return order
+
 class _TestData:
     """Some common test attributes collected here.
 
     This class name is prefixed with _ so that pytest doesn't try treat it as
     a class containing tests.
     """
+
     def __init__(self):
         self.algorithm = None
         self.trader = None
-        self.slice = None
-        self.exch_1_slice = None
-        self.exch_2_slice = None
+        self.state = None
+        self.exch_1_state = None
+        self.exch_2_state = None
+        self.action_queue = None
+        self.bid_action = None
+
+    def step_algorithm(self):
+        self.algorithm.on_data()
+        actions = list(self.action_queue.queue)
+        self.action_queue.queue.clear()
+        return actions
 
 
 @pytest.fixture
@@ -36,14 +78,14 @@ def empty_data():
     """
     td = _TestData()
     td.algorithm = OneWayPairArbitrage(bid_on_exchange, ask_on_exchange)
-    td.trader = trader.Trader(td.algorithm, [bid_on_exchange, ask_on_exchange])
-    td.trader.initialize()
-    td.slice = trader.Slice()
-    td.trader.next_slice = td.slice
-    td.exch_1_slice = trader.ExchangeSlice(bid_on_exchange, fetcher=None)
-    td.exch_2_slice = trader.ExchangeSlice(ask_on_exchange, fetcher=None)
-    td.slice.set_slice(bid_on_exchange, td.exch_1_slice)
-    td.slice.set_slice(ask_on_exchange, td.exch_2_slice)
+    td.trader = trader.Trader(td.algorithm)
+    td.state = td.trader.state
+    td.exch_1_state = ExchangeState(bid_on_exchange, exchange_client=None)
+    td.exch_2_state = ExchangeState(ask_on_exchange, exchange_client=None)
+    td.state.add_exchange(td.exch_1_state)
+    td.state.add_exchange(td.exch_2_state)
+    td.action_queue = Queue()
+    td.algorithm.initialize(td.state, DummyTimer(), td.action_queue.put)
     return td
 
 
@@ -60,22 +102,14 @@ def exch_2_order_book_data(empty_data):
     """
     # Renamed variable to give it a semantic name.
     td = empty_data
-    td.exch_2_slice.order_book = {
-        'bids': [[20000,  5.0],
-                 [1600,   5.0]],
-        'asks': [[21000,  2.3],
-                 [21300,  0.7]],
-        'timestamp': 0
-    }
+    # Initialize the order book of the exchange to sell on.
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(20000),
+                                                    remaining=Decimal(5.0))
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(1600),
+                                                    remaining=Decimal(5.0))
     # Give us lots of money so that balance isn't an issue by default.
-    one_million = 1000000
-    full_balance = {
-        'free': {
-            'BTC': Decimal(0.00),
-            'USD': Decimal(one_million)
-        }
-    }
-    td.exch_1_slice.balance = full_balance
+    one_million = Decimal(1000000)
+    td.exch_1_state.balance().set_free("USD", one_million)
     # Assign a bid amount.
     td.bid_amount = Decimal("1.0")
     td.algorithm.bid_amount_in_btc = td.bid_amount
@@ -96,21 +130,17 @@ def state_after_one_bid_order(exch_2_order_book_data):
 
     # Setup.
     # 1: make the bid limit order.
-    actions = td.trader.step()
+    actions = td.step_algorithm()
     # Note: is it okay to have asserts in the fixture?
     assert_single_limit_bid(actions, td.bid_amount)
     # 2: mark the bid limit order as succeeded.
-    td.bid_order = actions[0]
+    td.bid_action = actions[0]
     td.order_id = '5'
-    td.bid_order.order_id = td.order_id
-    td.bid_order.status = CreateOrder.Status.SUCCESS
-    order_info = {
-        'id': td.order_id,
-        'amount': td.bid_order.amount,
-        'filled': 0,
-        'remaining': td.bid_order.amount
-    }
-    td.exch_1_slice.set_order(td.order_id, order_info)
+    price = Decimal(18000)
+    td.bid_action.status = CreateOrder.Status.SUCCESS
+    order = create_bid_limit_order(td.order_id, price, td.bid_action.amount)
+    td.bid_action.order = order
+    td.exch_1_state.set_order(td.order_id, order)
     return td
 
 
@@ -122,8 +152,8 @@ def assert_single_limit_bid(actions, amount=None):
     """
     assert len(actions) == 1
     bid_order_action = actions[0]
-    assert bid_order_action.type == CreateOrder.Type.LIMIT
-    assert bid_order_action.side == CreateOrder.Side.BID
+    assert bid_order_action.type == Order.Type.LIMIT
+    assert bid_order_action.side == Order.Side.BID
     assert bid_order_action.exchange == bid_on_exchange
     if amount:
         assert bid_order_action.amount == amount
@@ -137,14 +167,14 @@ def assert_single_market_ask(actions, amount=None):
     """
     assert len(actions) == 1
     ask_order_action = actions[0]
-    assert ask_order_action.type == CreateOrder.Type.MARKET
-    assert ask_order_action.side == CreateOrder.Side.ASK
+    assert ask_order_action.type == Order.Type.MARKET
+    assert ask_order_action.side == Order.Side.ASK
     assert ask_order_action.exchange == ask_on_exchange
     if amount:
         # Only compare to about 9 dp (whatever the BasicContext dp limit is).
-            # TODO: figure out how to compare Decimals.
-            rounded = ask_order_action.amount.quantize(Decimal(10)**-10)
-            assert amount == rounded
+        # TODO: figure out how to compare Decimals.
+        rounded = ask_order_action.amount.quantize(Decimal(10) ** -10)
+        assert amount == rounded
 
 
 def test_makes_limit_order(exch_2_order_book_data):
@@ -162,10 +192,10 @@ def test_makes_limit_order(exch_2_order_book_data):
     td = exch_2_order_book_data
 
     # Setup
-    exch_2_market_price = Decimal(td.exch_2_slice.order_book['bids'][0][0])
+    exch_2_market_price = td.exch_2_state.order_book().bid_prices()[0]
 
     # Action
-    actions = td.trader.step()
+    actions = td.step_algorithm()
 
     # Check
     # Check that:
@@ -176,7 +206,7 @@ def test_makes_limit_order(exch_2_order_book_data):
     assert_single_limit_bid(actions, td.bid_amount)
     bid_action = actions[0]
     assert bid_action.price < (exch_2_market_price / (Decimal(1) +
-                                                     td.profit_target))
+                                                      td.profit_target))
 
 
 def test_bid_is_balance_aware(exch_2_order_book_data):
@@ -189,19 +219,19 @@ def test_bid_is_balance_aware(exch_2_order_book_data):
     #  * Make an estimate of how many BTC we can buy. Use this + a buffer to
     #    create an upper bound for how much we should be spending.
     small_balance = Decimal(5000)
-    td.exch_1_slice.balance['free']['USD'] = small_balance
+    td.exch_1_state.balance().set_free('USD', small_balance)
     # Try calculate how many BTC we can buy with our limited balance.
-    exch_2_market_price = td.exch_2_slice.order_book['bids'][0][0]
+    exch_2_market_price = td.exch_2_state.order_book().bid_prices()[0]
     bid_price_estimate = small_balance / exch_2_market_price
     # Accounting for our profit target and any fee buffer.
-    arbitary_buffer = Decimal(0.05) # Make smaller to make the test stricter.
+    arbitary_buffer = Decimal(0.05)  # Make smaller to make the test stricter.
     bid_price_estimate = bid_price_estimate * (Decimal(1) - td.profit_target -
                                                arbitary_buffer)
     max_can_afford = exch_2_market_price / bid_price_estimate
 
     # Action
     # Run a step of the algorithm.
-    actions = td.trader.step()
+    actions = td.step_algorithm()
 
     # Check
     # Check that:
@@ -220,12 +250,11 @@ def test_no_action_while_pending_ask(state_after_one_bid_order):
 
     # Setup.
     # Switch the status of the order to pending.
-    td.bid_order.status = CreateOrder.Status.PENDING
+    td.bid_action.status = CreateOrder.Status.PENDING
 
     # Action
     # Run a step of the algorithm.
-    td.slice.timestamp += td.algorithm.poll_period
-    actions = td.trader.step()
+    actions = td.step_algorithm()
 
     # Check
     assert len(actions) == 0
@@ -237,18 +266,20 @@ def test_reset_on_failed_ask(state_after_one_bid_order):
 
     # Setup
     # Switch the status of the order to failed.
-    td.bid_order.status = CreateOrder.Status.FAILED
+    td.bid_action.status = CreateOrder.Status.FAILED
 
     # Action 1
-    td.slice.timestamp += td.algorithm.poll_period
-    actions = td.trader.step()
+    print("A")
+    actions = td.step_algorithm()
+    print("B")
 
     # Check
     assert len(actions) == 0
 
     # Action 2
-    td.slice.timestamp += td.algorithm.poll_period
-    actions = td.trader.step()
+    print("C")
+    actions = td.step_algorithm()
+    print("D")
 
     # Check
     # In the next step should try another bid order.
@@ -261,8 +292,7 @@ def test_makes_market_order(state_after_one_bid_order):
     td = state_after_one_bid_order
 
     # Action
-    td.slice.timestamp += td.algorithm.poll_period
-    actions = td.trader.step()
+    actions = td.step_algorithm()
 
     # Check
     # The order is 0 filled, so there should be no market ask.
@@ -270,18 +300,17 @@ def test_makes_market_order(state_after_one_bid_order):
 
     # Setup
     # Half-fill the bid order.
-    bid_order = td.exch_1_slice.order(td.order_id)
-    bid_amount = Decimal(bid_order['amount'])
+    bid_order = td.exch_1_state.order(td.order_id)
+    bid_amount = Decimal(bid_order.amount)
     three_dp = Decimal("0.001")
     # Round the filled about to 3dp for ease of reading.
     filled = (bid_amount / Decimal(2)).quantize(three_dp, decimal.ROUND_HALF_UP)
-    bid_order['filled'] = filled
-    bid_order['remaining'] = bid_amount - filled
+    bid_order.filled = filled
+    bid_order.remaining = bid_amount - filled
 
     # Action
     # Step the algorithm again.
-    td.slice.timestamp += td.algorithm.poll_period
-    actions = td.trader.step()
+    actions = td.step_algorithm()
 
     # Check
     # An ask market order should be made for the filled amount of the bid order.
@@ -295,20 +324,20 @@ def fill_limit_bid(order, by_amount):
     if by_amount != rounded:
         raise Exception("When testing, try to keep by_amount to 4 dp.")
 
-    current_fill = Decimal(order['filled'])
-    order_total = Decimal(order['amount'])
-    remaining = Decimal(order['remaining'])
     # Remaining and filled should add to the total.
     # Note: is this actually the case in all instances?
     # This is an error in the testing code, if the assert is false.
-    assert currency.round_to_satoshi(order_total - current_fill - remaining) \
+    assert currency.round_to_satoshi(order.amount - order.filled -
+                                     order.remaining) \
            == 0
     # The order can't be filled for more than it's total amount
-    fully_filled =  (current_fill + by_amount) >= order_total
-    order['filled'] = min(order_total, (current_fill + by_amount))
-    order['remaining'] = max(0, (remaining - by_amount))
-    print("Filled: {}, remaining: {}".format(order['filled'], order['remaining']))
-    return fully_filled
+    by_amount = min(by_amount, order.amount - order.filled)
+    order.filled = order.filled + by_amount
+    order.remaining = max(0, (order.remaining - by_amount))
+    print("Filled: {}, remaining: {}".format(order.filled, order.remaining))
+    if not order.remaining:
+        order.status = Order.Status.CLOSED
+    return by_amount
 
 
 def test_make_multiple_bids(state_after_one_bid_order):
@@ -321,28 +350,92 @@ def test_make_multiple_bids(state_after_one_bid_order):
 
     # Start by filling the order by increment.
     increment = Decimal("0.15")
-    bid_order = td.exch_1_slice.order(td.order_id)
-    is_filled = fill_limit_bid(bid_order, increment)
+    bid_order = td.exch_1_state.order(td.order_id)
+    fill_amount = fill_limit_bid(bid_order, increment)
 
-    for i in range(0,100):
+    for i in range(0, 100):
         # Step the algorithm.
-        td.slice.timestamp += td.algorithm.poll_period
-        actions = td.trader.step()
-        # If we have filled the order, make sure there is both a market order
-        # and a new bid limit order, else there should be just a market order.
-        if is_filled:
-            assert len(actions) == 2
-            bid_action, ask_action = actions
-            if bid_action.side == CreateOrder.Side.ASK:
-                ask_action, bid_action = actions
-            assert_single_limit_bid([bid_action], td.bid_amount)
-            assert_single_market_ask([ask_action])
+        logging.info("Order ID: {}".format(bid_order.order_id))
+        actions = td.step_algorithm()
+        assert_single_market_ask(actions, min(increment, fill_amount))
+        if not bid_order.remaining:
+            logging.info("filled")
+            actions = td.step_algorithm()
+            assert len(actions) == 1
+            assert_single_limit_bid(actions, td.bid_amount)
             # Reset the order details.
+            bid_action = actions[0]
             bid_action.status = CreateOrder.Status.SUCCESS
-            bid_action.order_id = td.order_id
-            bid_order['filled'] = 0
-            bid_order['remaining'] = td.bid_amount
-        else:
-            assert_single_market_ask(actions, increment)
+            bid_action.order = bid_order
+            bid_action.order.status = Order.Status.OPEN
+            bid_order.filled = 0
+            bid_order.remaining = td.bid_amount
+            actions = td.step_algorithm()
+            # We should wait for a fill.
+            assert not actions
+        fill_amount = fill_limit_bid(bid_order, increment)
 
-        is_filled = fill_limit_bid(bid_order, increment)
+
+def test_update_bid_price(state_after_one_bid_order):
+    """Tests that the algorithm cancels an recreates an order when needed.
+
+    The algorithm should cancel and create a new order when the market price
+    on the exchange to sell on changes 'enough'.
+    """
+    td = state_after_one_bid_order
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Reduce the market value on the exchange to sell on very slightly.
+    # The current bid limit order shouldn't change as the market price change
+    # is too small to trigger the cancel.
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(20000),
+                                                    remaining=Decimal(0))
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(19950),
+                                                    remaining=Decimal(5.0))
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Reduce the market value again, this time by a lot.
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(19950),
+                                                    remaining=Decimal(0))
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(17000),
+                                                    remaining=Decimal(5.0))
+    # The first action should be a cancel action.
+    actions = td.step_algorithm()
+    assert len(actions) == 1
+    cancel_action = actions[0]
+    assert type(cancel_action) == CancelOrder
+    assert cancel_action.exchange == td.exch_1_state.exchange_id
+    assert cancel_action.order_id == td.order_id
+    # On the next step, the algorithm should be waiting as there is an
+    # outstanding cancel action.
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Let's update the cancel action and order.
+    cancel_action.status = Action.Status.SUCCESS
+    td.bid_action.order.status = Order.Status.CANCELLED # or CLOSED
+    actions = td.step_algorithm()
+    # The next loop will involve checking the cancel and order status, but
+    # nothing will happen until the next loop.
+    assert not len(actions)
+    # On the next step, we should have a new order action.
+    actions = td.step_algorithm()
+    assert len(actions) == 1
+    action = actions[0]
+    assert type(action) == CreateOrder
+
+
+# TODO:
+#  1. Test that an intended order cancel is handled correctly.
+#  2. Test that an unexpected cancel is handled correctly.
+#  3. Test that we don't try to update the limit price if the limit order is
+#     closed or cancelled.
+#  4. Test that we correctly handle the case where an order gets filled after
+#     we queue a cancel action, but before the order is cancelled.
+#     a) We can still make a profit
+#     b) The sell on exchange's market price drops below our buy on exchange
+#        market price.
+#     c) Both exchanges drop by X% (eg 20%) causing us to freeze any selling.
+
