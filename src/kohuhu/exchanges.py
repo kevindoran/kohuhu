@@ -26,7 +26,7 @@ class OrderBook:
 
     # Note: do we want to use the ordered dict directly, or through methods?
     def set_bids_remaining(self, at_price, remaining):
-        if remaining == 0:
+        if remaining == Decimal(0):
             del self._bids[at_price]
         else:
             self._bids[at_price] = remaining
@@ -99,7 +99,6 @@ class Order:
 
 
 class Balance:
-
     def __init__(self):
         self._free = {}
         self._on_hold = {}
@@ -110,7 +109,6 @@ class Balance:
                             f"Invalid symbol: '{symbol}' given. Switching it "
                             "to upper-case.")
         return symbol.upper()
-
 
     def free(self, symbol):
         symbol = self._check_symbol(symbol)
@@ -143,6 +141,7 @@ class ExchangeState:
         self._orders = {}
         self._balance = Balance()
         self.exchange_client = exchange_client
+        self.update_publisher = Publisher()
 
     def order_book(self, force_update=False):
         """The order book for the exchange."""
@@ -223,9 +222,6 @@ class CreateOrder(Action):
             onto any order actions they return if they wish to access the
             order_id that is created.
     """
-
-
-
     def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__(exchange_id)
         self.amount = amount
@@ -252,9 +248,11 @@ class CreateOrder(Action):
 class CancelOrder(Action):
     """Represents the action of cancelling an order."""
 
-    def __init__(self, order_id, exchange_id):
+    def __init__(self, exchange_id, order_id):
         super().__init__(exchange_id)
         self.order_id = order_id
+        # TODO: we may wish to move the status attribute into the Action class.
+        self.status = self.Status.PENDING
 
     @Action.name.getter
     def name(self):
@@ -267,16 +265,16 @@ class CancelOrder(Action):
 class ExchangeClient:
     """Keeps the ExchangeState of an exchange up to date. Also executes actions.
     """
-    def initialize(self):
-        """Creates and returns all tasks to be run in the async loop."""
+    def __init__(self, exchange_id):
+        self.exchange_id = exchange_id
+        self.exchange_state = None
+
+    def background_coroutines(self):
+        """Creates and returns all coroutines to be run in the async loop."""
         return NotImplementedError("Subclasses must implement this function.")
 
-    def set_on_change_callback(self, callback):
-        """Sets the callback to be called after any exchange data is updated."""
-        return NotImplementedError("Subclasses must implement this function.")
-
-    def exchange_state(self):
-        """Returns the exchange state managed by this exchange client."""
+    # Note: I'm not sure how best to open and close the connections.
+    async def open_connections(self):
         return NotImplementedError("Subclasses must implement this function.")
 
     def update_order_book(self):
@@ -295,3 +293,23 @@ class ExchangeClient:
         """Executes the given action on this exchange."""
         return NotImplementedError("Subclasses must implement this function.")
 
+
+class Publisher:
+    """Calls registered callbacks."""
+
+    def __init__(self, data=None):
+        self._data = data
+        self._update_callbacks = set()
+
+    def notify(self):
+        for c in self._update_callbacks:
+            if self._data:
+                c(id)
+            else:
+                c()
+
+    def add_callback(self, callback):
+        self._update_callbacks.add(callback)
+
+    def remove_callback(self, callback):
+        self._update_callbacks.remove(callback)
