@@ -1,6 +1,5 @@
 import kohuhu.exchanges as exchanges
-from kohuhu.exchanges import ExchangeClient
-from kohuhu.exchanges import ExchangeState
+from kohuhu.exchanges import ExchangeClient, ExchangeState, Quote
 import kohuhu.encryption as encryption
 import asyncio
 import base64
@@ -438,12 +437,11 @@ class GeminiExchange(ExchangeClient):
             side = event['side']
             price = Decimal(event['price'])
             quantity = Decimal(event['remaining'])
+            quote = Quote(price=price, quantity=quantity)
             if side == 'bid':
-                self._exchange_state.order_book().set_bids_remaining(price,
-                                                                    quantity)
+                self._exchange_state.order_book().bids().set_quote(quote)
             elif side == 'ask':
-                self._exchange_state.order_book().set_asks_remaining(price,
-                                                                    quantity)
+                self._exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
 

@@ -7,67 +7,83 @@ from sortedcontainers import SortedDict
 from datetime import datetime
 
 
+class Side(Enum):
+    """The side of the orderbook a quote or order is on."""
+    BID = auto()
+    ASK = auto()
+
+
+class SortedQuotes:
+    def __init__(self, side):
+        """A data structure of bid or ask quotes that provides fast lookup of the best nth
+        bid / best nth ask using the index operator and fast insertion with set_quote().
+
+        Usage:
+            bids = SortedQuotes(Side.BID)
+            quote_a = Quote(price=Decimal(500), quantity=Decimal(2))
+            bids.set_quote(quote_a)
+            quote_b = Quote(price=Decimal(600), quantity=Decimal(1))
+            bids.set_quote(quote_b)
+
+            >> bids[0]
+                [price=600, quantity=1]
+        """
+        if side == Side.BID:
+            self._price_quantity_dict = SortedDict(operator.neg)
+        elif side == Side.ASK:
+            self._price_quantity_dict = SortedDict()
+        else:
+            raise ValueError("Quote side must be supplied")
+
+    def __getitem__(self, index):
+        price = self._price_quantity_dict.iloc[index]
+        quantity = self._price_quantity_dict[price]
+        return Quote(price, quantity)
+
+    def set_quote(self, quote):
+        price = quote.price
+        quantity = quote.quantity
+        if quantity == 0:
+            del self._price_quantity_dict[price]
+        else:
+            self._price_quantity_dict[price] = quantity
+
+    def __len__(self):
+        return self._price_quantity_dict.__len__()
+
+    def __str__(self):
+        return self._price_quantity_dict.__str__()
+
+
 class OrderBook:
     """Represents an order book on an exchange.
 
     Attributes:
-        timestamp (datetime): UTC time of when the order book was last updated.
-        bids ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
-            key:value pairs. The first element contains the highest bid. Both price and
-            quantity are Decimals.
-        asks ({price:quantity, price:quantity, ...}): a sorted dictionary of price:quantity
-            key:value pairs. The first element contains the lowest ask. Both price and
-            quantity are Decimals.
+        bids Sorted quotes of bids on this exchange.
+        asks Sorted quotes of bids on this exchange.
     """
-    def __init__(self):#, timestamp), bids, asks):
-        #self.timestamp = timestamp
-        self._bids = SortedDict(operator.neg)
-        self._asks = SortedDict()
-
-    # Note: do we want to use the ordered dict directly, or through methods?
-    def set_bids_remaining(self, at_price, remaining):
-        if remaining == 0:
-            del self._bids[at_price]
-        else:
-            self._bids[at_price] = remaining
-        # Don't update subscribers here automatically as:
-        #   a) we may want to bunch multiple changes per update (eg REST)
-        #   b) it is easy to disable the callbacks when testing.
-        # Instead, subscribers are notified by an ExchangeClient.
-
-    def set_asks_remaining(self, at_price, remaining):
-        if remaining == 0:
-            del self._asks[at_price]
-        else:
-            self._asks[at_price] = remaining
-
-    def bids_remaining(self, at_price):
-        return self._bids[at_price]
-
-    def asks_remaining(self, at_price):
-        return self._asks[at_price]
-
-    def bid_prices(self):
-        return self._bids.keys()
-
-    def bid_by_index(self, index):
-        price = self._bids.iloc[index]
-        amount = self._bids[price]
-        return BidPricePair(price, amount)
-
-    def asks(self):
-        return self._asks.keys()
+    def __init__(self):
+        self._bids = SortedQuotes(Side.BID)
+        self._asks = SortedQuotes(Side.ASK)
 
     def bids(self):
-        return self._bids.keys()
+        return self._bids
+
+    def asks(self):
+        return self._asks
 
 
-class BidPricePair:
-    """A price, amount tuple. So we never mix up the order."""
-    def __init__(self, price, amount):
+class Quote:
+    """A single bid or ask quote on the exchange"""
+    def __init__(self, price, quantity):
         self.price = price
-        self.amount = amount
+        self.quantity = quantity
 
+    def __eq__(self, other):
+        return isinstance(other, Quote) and self.__dict__ == other.__dict__
+
+    def __str__(self):
+        return f"[price={self.price}, quantity={self.quantity}]"
 
 class Order:
     """Represents an order placed on an exchange.

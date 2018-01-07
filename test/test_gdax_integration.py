@@ -10,6 +10,7 @@ logging.disable(logging.DEBUG)
 credentials.load_credentials('api_credentials.json')
 
 @pytest.yield_fixture
+@pytest.mark.timeout(5)
 async def gdax_exchange(event_loop):
     creds = credentials.credentials_for('gdax', owner="tim")
     gdax = GdaxExchange(api_credentials=creds)
@@ -55,12 +56,10 @@ def test_gdax_callback_error_propagation():
         loop.run_until_complete(run_gdax_task)
 
 
-@pytest.mark.asyncio
-async def test_order_book(gdax_exchange):
-    bids = gdax_exchange.exchange_state().order_book().bids()
-    asks = gdax_exchange.exchange_state().order_book().asks()
-    best_bid = bids[0]
-    print(best_bid)
-    await asyncio.sleep(2)
-    print("success")
+# def test_valid_order_book(gdax_exchange):
+#     bids = gdax_exchange.exchange_state().order_book().bids()
+#     asks = gdax_exchange.exchange_state().order_book().asks()
+#     best_bid = bids[0]
+#     print(best_bid)
+#     print("success")
 

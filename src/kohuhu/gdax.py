@@ -1,4 +1,4 @@
-from kohuhu.exchanges import ExchangeClient
+from kohuhu.exchanges import ExchangeClient, Quote
 import json
 import websockets
 from decimal import Decimal
@@ -294,12 +294,14 @@ class GdaxExchange(ExchangeClient):
             # gdax uses [price, quantity]
             bid_price = Decimal(bid[0])
             bid_quantity = Decimal(bid[1])
-            self._exchange_state.order_book().set_bids_remaining(bid_price, bid_quantity)
+            bid_quote = Quote(price=bid_price, quantity=bid_quantity)
+            self._exchange_state.order_book().bids().set_quote(bid_quote)
 
         for ask in asks:
             ask_price = Decimal(ask[0])
             ask_quantity = Decimal(ask[1])
-            self._exchange_state.order_book().set_asks_remaining(ask_price, ask_quantity)
+            ask_quote = Quote(price=ask_price, quantity=ask_quantity)
+            self._exchange_state.order_book().asks().set_quote(ask_quote)
 
         # After having received a snapshot response, we consider the exchange orderbook
         # to be ready.
@@ -312,11 +314,12 @@ class GdaxExchange(ExchangeClient):
             side = change[0]  # Either 'buy' or 'sell'
             price = Decimal(change[1])
             quantity = Decimal(change[2])
+            quote = Quote(price=price, quantity=quantity)
 
             if side == 'buy':
-                self._exchange_state.order_book().set_bids_remaining(price, quantity)
+                self._exchange_state.order_book().bids().set_quote(quote)
             elif side == 'sell':
-                self._exchange_state.order_book().set_asks_remaining(price, quantity)
+                self._exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
 
