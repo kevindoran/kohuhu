@@ -269,12 +269,8 @@ class ExchangeClient:
         self.exchange_id = exchange_id
         self.exchange_state = None
 
-    def background_coroutines(self):
-        """Creates and returns all coroutines to be run in the async loop."""
-        return NotImplementedError("Subclasses must implement this function.")
-
-    # Note: I'm not sure how best to open and close the connections.
-    async def open_connections(self):
+    def run_task(self):
+        """Returns a future for starting and running the exchange client."""
         return NotImplementedError("Subclasses must implement this function.")
 
     def update_order_book(self):
