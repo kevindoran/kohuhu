@@ -195,6 +195,7 @@ class GeminiExchange(ExchangeClient):
             self.heartbeat_timestamp_ms = None
             self.ws = None
             self.connected_event = asyncio.Event()
+            self.ready = asyncio.Event()
             self.queue = asyncio.Queue()
 
     standard_exchange_name = "gemini"
@@ -205,20 +206,20 @@ class GeminiExchange(ExchangeClient):
     sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
 
     def __init__(self, sandbox=False):
-        self.request_retry_limit = 4
-        self.exchange_name = self.sandbox_exchange_name if sandbox \
+        exchange_id = self.sandbox_exchange_name if sandbox \
             else self.standard_exchange_name
+        super().__init__(exchange_id)
+        self.request_retry_limit = 4
         self._rest_url_base = self.sandbox_rest_url_base if sandbox \
             else self.standard_rest_url_base
         self._wss_url_base = self.sandbox_wss_url_base if sandbox \
             else self.standard_wss_url_base
-        self._exchange_state = ExchangeState(self.exchange_name, self)
+        self.exchange_state = ExchangeState(self.exchange_id, self)
         self._actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
         self._market_data_sock_info = self.SocketInfo()
         self._orders = {}
-        self._on_update_callback = None
 
     def _nonce(self):
         """"A nonce for the Gemini exchange API.
@@ -230,10 +231,7 @@ class GeminiExchange(ExchangeClient):
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
         return int(delta.total_seconds() * 1000)
 
-    def set_on_change_callback(self, callback):
-        self._on_update_callback = callback
-
-    def coroutines(self):
+    def background_coroutines(self):
         """Returns all the co-routines to be run in an event loop."""
         orders_receive_coro = self._listen_on_orders()
         market_data_receive_coro = self._listen_on_market_data()
@@ -250,7 +248,7 @@ class GeminiExchange(ExchangeClient):
         """Encode the payload for sending and calculate it's hash signature."""
         payload_bytes = json.dumps(dict_payload).encode(encoding)
         b64 = base64.b64encode(payload_bytes)
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         secret_bytes = creds.api_secret.encode(encoding)
         signature = hmac.new(secret_bytes, b64, sha384).hexdigest()
         return b64, signature
@@ -279,7 +277,7 @@ class GeminiExchange(ExchangeClient):
             'nonce': self._nonce()
         }
         payload.update(parameters)
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         b64, signature = self._encode_and_sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
@@ -301,7 +299,7 @@ class GeminiExchange(ExchangeClient):
         orders_path = '/v1/order/events'
         headers = self._create_headers(orders_path, encoding="utf-8")
         # Filter order events so that only events from this key are sent.
-        creds = credentials.credentials_for(self.exchange_name)
+        creds = credentials.credentials_for(self.exchange_id)
         order_events_url = self._wss_url_base + orders_path + \
                            f'?heartbeat=true&apiSessionFilter={creds.api_key}'
 
@@ -323,6 +321,22 @@ class GeminiExchange(ExchangeClient):
             market_data_url)
         self._market_data_sock_info.connected_event.set()
 
+    async def open_connections(self):
+        await self.open_market_data_websocket()
+        await self.open_orders_websocket()
+
+    async def setup_event(self):
+        """Waits for both connections to be open.
+
+        Use this co-routine to wait until the Gemini exchange client is setup.
+        Using this co-routine is an alternative to waiting synchronously on
+        open_connections().
+        """
+        await self._market_data_sock_info.ready.wait()
+        await self._orders_sock_info.ready.wait()
+
+    # I'm not sure if these two close methods ar needed when the try:finally
+    # block is used in the listen methods.
     async def close_orders_websocket(self):
         await self._orders_sock_info.ws.close()
 
@@ -332,22 +346,30 @@ class GeminiExchange(ExchangeClient):
     async def _listen_on_orders(self):
         """Listen on the orders websocket for updates to our orders."""
         await self._orders_sock_info.connected_event.wait()
-        async for message in self._orders_sock_info.ws:
-            if self._orders_sock_info.queue.qsize() >= 100:
-                log.warning("Websocket message queue is has "
-                            f"{self._orders_sock_info.queue.qsize()} pending "
-                            "messages.")
-            await self._orders_sock_info.queue.put(message)
+        try:
+            async for message in self._orders_sock_info.ws:
+                self._orders_sock_info.ready.set()
+                if self._orders_sock_info.queue.qsize() >= 100:
+                    log.warning("Websocket message queue is has "
+                                f"{self._orders_sock_info.queue.qsize()} pending "
+                                "messages.")
+                await self._orders_sock_info.queue.put(message)
+        finally:
+            await self._orders_sock_info.ws.close()
 
     async def _listen_on_market_data(self):
         """Listen on the market websocket for order book updates."""
         await self._market_data_sock_info.connected_event.wait()
-        async for message in self._market_data_sock_info.ws:
-            if self._market_data_sock_info.queue.qsize() >= 100:
-                log.warning("Websocket message queue is has "
-                            f"{self._market_data_sock_info.queue.qsize()} pending"
-                            " messages.")
-            await self._market_data_sock_info.queue.put(message)
+        try:
+            async for message in self._market_data_sock_info.ws:
+                self._market_data_sock_info.ready.set()
+                if self._market_data_sock_info.queue.qsize() >= 100:
+                    log.warning("Websocket message queue is has "
+                                f"{self._market_data_sock_info.queue.qsize()} pending"
+                                " messages.")
+                await self._market_data_sock_info.queue.put(message)
+        finally:
+            await self._market_data_sock_info.ws.close()
 
     async def _process_queue(self, callback, socket_info,
                              has_heartbeat_seq=True):
@@ -357,6 +379,7 @@ class GeminiExchange(ExchangeClient):
         and checks message sequence numbers. This processing is required for
         all Gemini websocket endpoints.
         """
+        pending_callback = False
         while True:
             unparsed_message = await socket_info.queue.get()
             response = json.loads(unparsed_message)
@@ -373,11 +396,14 @@ class GeminiExchange(ExchangeClient):
             # A non heartbeat message.
             for message in message_list:
                 self._check_sequence(message, socket_info)
-                callback(message)
+                state_update = callback(message)
+                if state_update:
+                    pending_callback = True
             if not socket_info.queue.empty():
                 continue
-            if self._on_update_callback:
-                self._on_update_callback()
+            if pending_callback:
+                self.exchange_state.update_publisher.notify()
+                pending_callback = False
 
     @staticmethod
     def _check_sequence(response, socket_info):
@@ -418,9 +444,11 @@ class GeminiExchange(ExchangeClient):
         # Unused response data:
         # trace_id is used fo logging. No use for it yet.
         #trace_id = response['trade_id']
-        if socket_seq == 0:
-            raise Exception("The heartbeat should never be the first message to"
-                            "start the socket sequence.")
+        # Update: It looks like heatbeats can hold the first socket sequence.
+        # Delete below lines when we are sure.
+        #if socket_seq == 0:
+        #    raise Exception("The heartbeat should never be the first message to"
+        #                    "start the socket sequence.")
         if heartbeat_seq != socket_info.heartbeat_seq:
             raise Exception("We have missed a heartbeat sequence. The previous "
                             f"sequence was {socket_info.heartbeat_seq} and the "
@@ -429,7 +457,14 @@ class GeminiExchange(ExchangeClient):
         socket_info.heartbeat_timestamp_ms = timestamp_ms
 
     def _handle_market_data(self, response):
-        """Updates the order book when a market data update is received."""
+        """Updates the order book when a market data update is received.
+
+        Args:
+            response (dict): the socket message as a JSON dict.
+
+        Returns:
+            bool: True if the underlying exchange state has been changed.
+        """
         if response['type'] != 'update':
             err_msg = f"Got unexpected response: {response['type']}"
             logging.info(err_msg)
@@ -441,18 +476,26 @@ class GeminiExchange(ExchangeClient):
             price = Decimal(event['price'])
             quantity = Decimal(event['remaining'])
             if side == 'bid':
-                self._exchange_state.order_book().set_bids_remaining(price,
+                self.exchange_state.order_book().set_bids_remaining(price,
                                                                     quantity)
             elif side == 'ask':
-                self._exchange_state.order_book().set_asks_remaining(price,
+                self.exchange_state.order_book().set_asks_remaining(price,
                                                                     quantity)
             else:
                 raise Exception("Unexpected update side: " + side)
+        return True
 
     def _handle_orders(self, response):
         """Update the order records when a message is received on /order/events.
+
+        Args:
+            response (dict): the socket message as a JSON dict.
+
+        Returns:
+            bool: True if the underlying exchange state has been changed.
         """
         response_type = response['type']
+        state_updated = False
         if response_type == "subscription_ack":
             # Insure the subscription details are expected. Don't do anything.
             account_id = response['accountId']
@@ -468,7 +511,7 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("1 session filter should have been registered."
                                 f"{len(api_session_filter)} were registered.")
             accepted_key = api_session_filter[0]
-            if accepted_key != credentials.credentials_for(self.exchange_name)\
+            if accepted_key != credentials.credentials_for(self.exchange_id)\
                     .api_key:
                 raise Exception("The whitelisted api session key does not "
                                 "match our session key.")
@@ -477,17 +520,18 @@ class GeminiExchange(ExchangeClient):
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            existing_order = self._exchange_state.order(new_order.order_id)
+            existing_order = self.exchange_state.order(new_order.order_id)
             if existing_order:
                 raise Exception("An initial response was received for an "
                                 "existing order (id: {new_order.order_id}).")
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
+            state_updated = True
         elif response_type == "accepted":
             # Create a new order. Mark the corresponding action as successful.
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
             for a in self._actions:
                 if id(a) == order_response.client_order_id:
@@ -503,12 +547,13 @@ class GeminiExchange(ExchangeClient):
             if not found_action:
                 raise Exception("Received an order accept message, but no "
                                 "matching order action was found.")
+            state_updated = True
         elif response_type == "rejected":
             order_response = OrderResponse.from_json_dict(response)
             log.warning(f"An order was rejected. Reason: " + response['reason'])
             new_order = exchanges.Order()
             order_response.update_order(new_order)
-            self._exchange_state.set_order(new_order.order_id, new_order)
+            self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
             for a in self._actions:
                 if id(a) == order_response.client_order_id:
@@ -523,23 +568,25 @@ class GeminiExchange(ExchangeClient):
             if not found_action:
                 raise Exception("Received an order reject message, but no "
                                 "matching order action was found.")
+            state_updated = True
         elif response_type == "booked":
             # I don't think we need to act on this.
             log.info("Order booked. Order id:{response['order_id']}.")
         elif response_type == "fill":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             if not order:
                 raise Exception("Received a fill response for an unknown order "
                                 f"(id:{order_response.order_id}).")
             log.info("Order fill response received for order id: "
                      f"{order_response.order_id}.")
             order_response.update_order(order)
+            state_updated = True
             # TODO: we could add some checks here to see if our fee calculation
             # is correct.
         elif response_type == "cancelled":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             reason = response.get('reason', 'No reason provided.')
             # Unused:
             # cancel_command_id = response.get('cancel_command_id', None)
@@ -555,6 +602,7 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("Received a cancel response but can't find a "
                                 "matching cancel action.")
             cancel_action.status = exchanges.Action.Status.SUCCESS
+            state_updated = True
         elif response_type == "cancel_rejected":
             order_response = OrderResponse.from_json_dict(response)
             reason = response.get('reason', 'No reason provided.')
@@ -566,24 +614,24 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("Received a cancel rejected response but can't "
                                 "find a matching cancel action.")
             cancel_action.status = exchanges.Action.Status.FAILED
+            state_updated = True
         elif response_type == "closed":
             order_response = OrderResponse.from_json_dict(response)
-            order = self._exchange_state.order(order_response.order_id)
+            order = self.exchange_state.order(order_response.order_id)
             if not order:
                 raise Exception("Received a close response for an unknown order"
                                 f" (id:{order_response.order_id}).")
             log.info("Order close response received for order id: "
                      f"{order_response.order_id}.")
             order_response.update_order(order)
+            state_updated = True
         else:
             raise Exception(f"Unexpected response type: {response_type}.")
-
-    def exchange_state(self):
-        return self._exchange_state
+        return state_updated
 
     def execute_action(self, action):
         """Ren the given action on this exchange."""
-        if action.exchange != self.exchange_name:
+        if action.exchange != self.exchange_id:
             raise Exception(f"An action for exchange '{action.exchange}' was "
                             "given to GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
@@ -674,8 +722,8 @@ class GeminiExchange(ExchangeClient):
 
             free = available
             on_hold = amount - available
-            self._exchange_state.balance().set_free(currency, free)
-            self._exchange_state.balance().set_on_hold(currency, on_hold)
+            self.exchange_state.balance().set_free(currency, free)
+            self.exchange_state.balance().set_on_hold(currency, on_hold)
 
     def update_orders(self):
         # The orders are updated automatically.

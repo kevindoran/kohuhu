@@ -3,11 +3,14 @@ from kohuhu.arbitrage import OneWayPairArbitrage
 import kohuhu.trader as trader
 from kohuhu.exchanges import CreateOrder
 from kohuhu.exchanges import Order
+from kohuhu.exchanges import CancelOrder
+from kohuhu.exchanges import Action
 from kohuhu.exchanges import ExchangeState
 import decimal
 import kohuhu.currency as currency
 from decimal import Decimal
 from queue import Queue
+import logging
 
 # It doesn't actually used these exchanges. The exchanges just have to be
 # something for which we have fee data.
@@ -82,7 +85,7 @@ def empty_data():
     td.state.add_exchange(td.exch_1_state)
     td.state.add_exchange(td.exch_2_state)
     td.action_queue = Queue()
-    td.algorithm.initialize(td.state, DummyTimer(), td.action_queue)
+    td.algorithm.initialize(td.state, DummyTimer(), td.action_queue.put)
     return td
 
 
@@ -133,7 +136,7 @@ def state_after_one_bid_order(exch_2_order_book_data):
     # 2: mark the bid limit order as succeeded.
     td.bid_action = actions[0]
     td.order_id = '5'
-    price = Decimal(10000)
+    price = Decimal(18000)
     td.bid_action.status = CreateOrder.Status.SUCCESS
     order = create_bid_limit_order(td.order_id, price, td.bid_action.amount)
     td.bid_action.order = order
@@ -328,12 +331,13 @@ def fill_limit_bid(order, by_amount):
                                      order.remaining) \
            == 0
     # The order can't be filled for more than it's total amount
-    fully_filled = (order.filled + by_amount) >= order.amount
-    order.filled = min(order.amount, (order.filled + by_amount))
+    by_amount = min(by_amount, order.amount - order.filled)
+    order.filled = order.filled + by_amount
     order.remaining = max(0, (order.remaining - by_amount))
-    print(
-        "Filled: {}, remaining: {}".format(order.filled, order.remaining))
-    return fully_filled
+    print("Filled: {}, remaining: {}".format(order.filled, order.remaining))
+    if not order.remaining:
+        order.status = Order.Status.CLOSED
+    return by_amount
 
 
 def test_make_multiple_bids(state_after_one_bid_order):
@@ -347,31 +351,91 @@ def test_make_multiple_bids(state_after_one_bid_order):
     # Start by filling the order by increment.
     increment = Decimal("0.15")
     bid_order = td.exch_1_state.order(td.order_id)
-    is_filled = fill_limit_bid(bid_order, increment)
+    fill_amount = fill_limit_bid(bid_order, increment)
 
     for i in range(0, 100):
         # Step the algorithm.
-        print("Order ID: {}".format(bid_order.order_id))
+        logging.info("Order ID: {}".format(bid_order.order_id))
         actions = td.step_algorithm()
-
-        # If we have filled the order, make sure there is both a market order
-        # and a new bid limit order, else there should be just a market order.
-        if is_filled:
-            print("filled")
-            assert len(actions) == 2
-            bid_action, ask_action = actions
-            if bid_action.side == Order.Side.ASK:
-                ask_action, bid_action = actions
-            assert_single_limit_bid([bid_action], td.bid_amount)
-            assert_single_market_ask([ask_action])
+        assert_single_market_ask(actions, min(increment, fill_amount))
+        if not bid_order.remaining:
+            logging.info("filled")
+            actions = td.step_algorithm()
+            assert len(actions) == 1
+            assert_single_limit_bid(actions, td.bid_amount)
             # Reset the order details.
+            bid_action = actions[0]
             bid_action.status = CreateOrder.Status.SUCCESS
             bid_action.order = bid_order
+            bid_action.order.status = Order.Status.OPEN
             bid_order.filled = 0
             bid_order.remaining = td.bid_amount
-        else:
-            assert_single_market_ask(actions, increment)
-        is_filled = fill_limit_bid(bid_order, increment)
+            actions = td.step_algorithm()
+            # We should wait for a fill.
+            assert not actions
+        fill_amount = fill_limit_bid(bid_order, increment)
 
 
-# TODO: test_updates_bid_price()
+def test_update_bid_price(state_after_one_bid_order):
+    """Tests that the algorithm cancels an recreates an order when needed.
+
+    The algorithm should cancel and create a new order when the market price
+    on the exchange to sell on changes 'enough'.
+    """
+    td = state_after_one_bid_order
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Reduce the market value on the exchange to sell on very slightly.
+    # The current bid limit order shouldn't change as the market price change
+    # is too small to trigger the cancel.
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(20000),
+                                                    remaining=Decimal(0))
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(19950),
+                                                    remaining=Decimal(5.0))
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Reduce the market value again, this time by a lot.
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(19950),
+                                                    remaining=Decimal(0))
+    td.exch_2_state.order_book().set_bids_remaining(at_price=Decimal(17000),
+                                                    remaining=Decimal(5.0))
+    # The first action should be a cancel action.
+    actions = td.step_algorithm()
+    assert len(actions) == 1
+    cancel_action = actions[0]
+    assert type(cancel_action) == CancelOrder
+    assert cancel_action.exchange == td.exch_1_state.exchange_id
+    assert cancel_action.order_id == td.order_id
+    # On the next step, the algorithm should be waiting as there is an
+    # outstanding cancel action.
+    actions = td.step_algorithm()
+    assert not len(actions)
+
+    # Let's update the cancel action and order.
+    cancel_action.status = Action.Status.SUCCESS
+    td.bid_action.order.status = Order.Status.CANCELLED # or CLOSED
+    actions = td.step_algorithm()
+    # The next loop will involve checking the cancel and order status, but
+    # nothing will happen until the next loop.
+    assert not len(actions)
+    # On the next step, we should have a new order action.
+    actions = td.step_algorithm()
+    assert len(actions) == 1
+    action = actions[0]
+    assert type(action) == CreateOrder
+
+
+# TODO:
+#  1. Test that an intended order cancel is handled correctly.
+#  2. Test that an unexpected cancel is handled correctly.
+#  3. Test that we don't try to update the limit price if the limit order is
+#     closed or cancelled.
+#  4. Test that we correctly handle the case where an order gets filled after
+#     we queue a cancel action, but before the order is cancelled.
+#     a) We can still make a profit
+#     b) The sell on exchange's market price drops below our buy on exchange
+#        market price.
+#     c) Both exchanges drop by X% (eg 20%) causing us to freeze any selling.
+
