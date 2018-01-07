@@ -26,7 +26,7 @@ class OrderBook:
 
     # Note: do we want to use the ordered dict directly, or through methods?
     def set_bids_remaining(self, at_price, remaining):
-        if remaining == 0:
+        if remaining == Decimal(0):
             del self._bids[at_price]
         else:
             self._bids[at_price] = remaining
@@ -248,9 +248,11 @@ class CreateOrder(Action):
 class CancelOrder(Action):
     """Represents the action of cancelling an order."""
 
-    def __init__(self, order_id, exchange_id):
+    def __init__(self, exchange_id, order_id):
         super().__init__(exchange_id)
         self.order_id = order_id
+        # TODO: we may wish to move the status attribute into the Action class.
+        self.status = self.Status.PENDING
 
     @Action.name.getter
     def name(self):
