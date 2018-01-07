@@ -135,8 +135,8 @@ class OneWayPairArbitrage(trader.Algorithm):
                 self._live_limit_action = None
                 self._live_cancel_action = None
             elif self._live_cancel_action.status == Action.Status.FAILED:
-                raise Exception("A cancel action failed. This situation is "
-                                "currently not handled.")
+                raise NotImplementedError("A cancel action failed. This "
+                                          "situation is currently not handled.")
             # Don't update_bid_limit_order()
             # Note: using returns may make it difficult to understand and debug
             # the code. We may need to switch to using boolean flags to mark
@@ -145,9 +145,9 @@ class OneWayPairArbitrage(trader.Algorithm):
 
         # Check the status of the order. Only proceed if the order is open.
         if self._live_limit_action.order.status == Order.Status.CANCELLED:
-            raise Exception("Our order has been cancelled without our "
-                            "intention. This situation is currently not "
-                            "handled.")
+            raise NotImplementedError("Our order has been cancelled without our"
+                                      " intention. This situation is currently "
+                                      "not handled.")
         elif self._live_limit_action.order.status == Order.Status.CLOSED:
             # Reset our order records if the order is completed.
             self._live_limit_action = None
