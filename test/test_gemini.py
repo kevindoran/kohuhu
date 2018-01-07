@@ -199,7 +199,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
@@ -215,7 +215,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
 
@@ -256,7 +256,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
@@ -271,7 +271,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
 
@@ -315,7 +315,7 @@ def test_process_rejected(rejected_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
@@ -330,7 +330,7 @@ def test_process_rejected(rejected_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
 

@@ -215,7 +215,7 @@ class GeminiExchange(ExchangeClient):
         self._wss_url_base = self.sandbox_wss_url_base if sandbox \
             else self.standard_wss_url_base
         self.exchange_state = ExchangeState(self.exchange_id, self)
-        self._actions = []
+        self._create_actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
         self._market_data_sock_info = self.SocketInfo()
@@ -230,19 +230,6 @@ class GeminiExchange(ExchangeClient):
         # cause an issue.
         delta = datetime.datetime.utcnow() - datetime.datetime(1970, 1, 1)
         return int(delta.total_seconds() * 1000)
-
-    def background_coroutines(self):
-        """Returns all the co-routines to be run in an event loop."""
-        orders_receive_coro = self._listen_on_orders()
-        market_data_receive_coro = self._listen_on_market_data()
-        process_orders_coro = self._process_queue(callback=self._handle_orders,
-                                socket_info=self._orders_sock_info)
-        process_market_data_coro = self._process_queue(
-                                callback=self._handle_market_data,
-                                socket_info=self._market_data_sock_info,
-                                has_heartbeat_seq=False)
-        return (orders_receive_coro, market_data_receive_coro,
-                process_orders_coro, process_market_data_coro)
 
     def _encode_and_sign(self, dict_payload, encoding="ascii"):
         """Encode the payload for sending and calculate it's hash signature."""
@@ -289,7 +276,33 @@ class GeminiExchange(ExchangeClient):
         }
         return headers
 
-    async def open_orders_websocket(self):
+    def run_task(self):
+        """Returns the future for running the Gemini exchange client."""
+        process_orders_coro = self._process_queue(callback=self._handle_orders,
+                                socket_info=self._orders_sock_info)
+        process_market_data_coro = self._process_queue(
+                                callback=self._handle_market_data,
+                                socket_info=self._market_data_sock_info,
+                                has_heartbeat_seq=False)
+
+        async def listen_orders():
+            try:
+                await self._open_orders_websocket()
+                await self._listen_on_orders()
+            finally:
+                await self._orders_sock_info.ws.close()
+
+        async def listen_market_data():
+            try:
+                await self._open_market_data_websocket()
+                await self._listen_on_market_data()
+            finally:
+                await self._market_data_sock_info.ws.close()
+
+        return asyncio.gather(listen_orders(), process_orders_coro,
+                              listen_market_data(), process_market_data_coro)
+
+    async def _open_orders_websocket(self):
         """Opens the websocket for getting our order details.
 
         This co-routine should not be a background task, as it can be
@@ -308,7 +321,7 @@ class GeminiExchange(ExchangeClient):
             order_events_url, extra_headers=headers)
         self._orders_sock_info.connected_event.set()
 
-    async def open_market_data_websocket(self):
+    async def _open_market_data_websocket(self):
         """Opens the websocket for getting market data.
 
         This co-routine should not be a background task, as it can be
@@ -321,30 +334,38 @@ class GeminiExchange(ExchangeClient):
             market_data_url)
         self._market_data_sock_info.connected_event.set()
 
-    async def open_connections(self):
-        await self.open_market_data_websocket()
-        await self.open_orders_websocket()
-
     async def setup_event(self):
         """Waits for both connections to be open.
 
         Use this co-routine to wait until the Gemini exchange client is setup.
-        Using this co-routine is an alternative to waiting synchronously on
-        open_connections().
         """
+        # We may need stricter conditions, however, it seems likely that the
+        # following is sufficient as:
+        #   a) The first message that will cause an update for both the order
+        #      websocket and the market data websocket would be a full, atomic
+        #      update. In other words, it seems that a single message is used
+        #      to send the full initial state for both sockets. If it too
+        #      multiple, then a more complex setup lock would be needed.
+        #   b) As we don't notify subscribers on heartbeats or subscription
+        #      acknowledgements, we can be certain that marking the client as
+        #      setup on the first received message is not premature, even if it
+        #      is just a heartbeat.
         await self._market_data_sock_info.ready.wait()
         await self._orders_sock_info.ready.wait()
 
-    # I'm not sure if these two close methods ar needed when the try:finally
-    # block is used in the listen methods.
-    async def close_orders_websocket(self):
-        await self._orders_sock_info.ws.close()
+    def is_setup(self):
+        """Returns whether the exchange client is fully initialized.
 
-    async def close_market_data_websocket(self):
-        await self._market_data_sock_info.ws.close()
+        Returns:
+            bool: True if the exchange client has initialized the exchange_state
+                  and is ready to send callback events to subscribers.
+        """
+        return self._market_data_sock_info.ready.is_set() and \
+               self._orders_sock_info.ready.is_set()
 
     async def _listen_on_orders(self):
         """Listen on the orders websocket for updates to our orders."""
+        # The lock is used to make sure the websocket is setup before using it.
         await self._orders_sock_info.connected_event.wait()
         try:
             async for message in self._orders_sock_info.ws:
@@ -359,6 +380,7 @@ class GeminiExchange(ExchangeClient):
 
     async def _listen_on_market_data(self):
         """Listen on the market websocket for order book updates."""
+        # The lock is used to make sure the websocket is setup before using it.
         await self._market_data_sock_info.connected_event.wait()
         try:
             async for message in self._market_data_sock_info.ws:
@@ -392,6 +414,7 @@ class GeminiExchange(ExchangeClient):
             if message_list[0]['type'] == 'heartbeat':
                 if has_heartbeat_seq:
                     self._process_heartbeat(message_list[0], socket_info)
+                self._check_sequence(message_list[0], socket_info)
                 continue
             # A non heartbeat message.
             for message in message_list:
@@ -401,7 +424,7 @@ class GeminiExchange(ExchangeClient):
                     pending_callback = True
             if not socket_info.queue.empty():
                 continue
-            if pending_callback:
+            if pending_callback and self.is_setup():
                 self.exchange_state.update_publisher.notify()
                 pending_callback = False
 
@@ -533,8 +556,8 @@ class GeminiExchange(ExchangeClient):
             order_response.update_order(new_order)
             self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
-            for a in self._actions:
-                if id(a) == order_response.client_order_id:
+            for a in self._create_actions:
+                if id(a) == int(order_response.client_order_id):
                     if a.order is not None:
                         raise Exception("An order accept message was received, "
                                         "but its corresponding action already "
@@ -555,8 +578,8 @@ class GeminiExchange(ExchangeClient):
             order_response.update_order(new_order)
             self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
-            for a in self._actions:
-                if id(a) == order_response.client_order_id:
+            for a in self._create_actions:
+                if id(a) == int(order_response.client_order_id):
                     if a.order is not None:
                         raise Exception("An order reject message was received, "
                                         "but its corresponding action already "
@@ -635,10 +658,12 @@ class GeminiExchange(ExchangeClient):
             raise Exception(f"An action for exchange '{action.exchange}' was "
                             "given to GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
+            self._create_actions.append(action)
             new_order_path = "/v1/order/new"
             params = self._new_order_parameters(action)
             self._post_http_request(new_order_path, params)
         elif type(action) == exchanges.CancelOrder:
+            self._cancel_actions[action.order_id] = action
             cancel_order_path = "v1/order/cancel"
             params = self._cancel_order_parameters(action)
             self._post_http_request(cancel_order_path, params)

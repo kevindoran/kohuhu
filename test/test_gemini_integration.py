@@ -60,22 +60,17 @@ def test_get_balance(sandbox_exchange):
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
     gemini = GeminiExchange(sandbox=True)
-    coroutines = gemini.background_coroutines()
-    tasks = []
-    for c in coroutines:
-        t = asyncio.ensure_future(c, loop=event_loop)
-        tasks.append(t)
+    run_task = gemini.run_task()
+    asyncio.ensure_future(run_task, loop=event_loop)
     yield gemini
-    for t in tasks:
-        # From the cancel() docs:
-        #     "This arranges for a CancelledError to be thrown into the wrapped
-        #     coroutine on the next cycle through the event loop."
-        # So we add a sleep call after calling cancel()
-        t.cancel()
+    # From the cancel() docs:
+    #     "This arranges for a CancelledError to be thrown into the wrapped
+    #     coroutine on the next cycle through the event loop."
+    # So we add a sleep call after calling cancel()
+    run_task.cancel()
     await asyncio.sleep(1)
     try:
-        for t in tasks:
-            t.result()
+        run_task.result()
     except asyncio.CancelledError as ex:
         logging.exception(ex)
     # I'm not sure if we need to call one or both of these.
@@ -83,43 +78,12 @@ async def live_sandbox_exchange(event_loop):
     #event_loop.close()
 
 
-# TODO: factor these two fixture methods.
-@pytest.fixture
-async def live_sandbox_with_order_book(event_loop):
-    gemini = GeminiExchange(sandbox=True)
-    await gemini.open_orders_websocket()
-    await gemini.open_market_data_websocket()
-    coroutines = gemini.background_coroutines()
-    tasks = []
-    for c in coroutines:
-        t = asyncio.ensure_future(c, loop=event_loop)
-        tasks.append(t)
-    yield gemini
-    for t in tasks:
-        # From the cancel() docs:
-        #     "This arranges for a CancelledError to be thrown into the wrapped
-        #     coroutine on the next cycle through the event loop."
-        # So we add a sleep call after calling cancel()
-        t.cancel()
-    await asyncio.sleep(1)
-    try:
-        for t in tasks:
-            t.result()
-    except asyncio.CancelledError as ex:
-        logging.exception(f"Received a cancellation error: {ex}")
-    await gemini.close_orders_websocket()
-    await gemini.close_market_data_websocket()
-    # I'm not sure if we need to call one or both of these.
-    #event_loop.stop()
-    #event_loop.close()
-    gemini = live_sandbox_exchange
-
-
 @pytest.mark.asyncio
 async def test_market_buy(live_sandbox_exchange):
     """Executes a market bid and checks that the order is registered."""
     gemini = live_sandbox_exchange
     await gemini.setup_event()
+    #await asyncio.sleep(5)
     exchange_state = gemini.exchange_state
 
     bid_amount = Decimal("0.00001")
@@ -133,9 +97,10 @@ async def test_market_buy(live_sandbox_exchange):
 
 
 @pytest.mark.asyncio
-async def test_order_book(live_sandbox_with_order_book):
+async def test_order_book(live_sandbox_exchange):
     """Insures the order book is populated after the gemini client starts up."""
-    gemini = live_sandbox_with_order_book
+    gemini = live_sandbox_exchange
+    await gemini.setup_event()
     exchange_state = gemini.exchange_state
     success = await wait_until(lambda: len(exchange_state.order_book().asks()))
     assert success

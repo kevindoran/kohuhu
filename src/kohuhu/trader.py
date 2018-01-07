@@ -124,10 +124,8 @@ class Trader:
         for e in self.exchanges:
             self.state.add_exchange(e.exchange_state)
             e.exchange_state.update_publisher.add_callback(self.log_updates)
-            coroutines_for_exchange = e.background_coroutines()
-            for c in coroutines_for_exchange:
-                self._tasks.append(asyncio.ensure_future(c))
-            self._tasks.append(asyncio.ensure_future(e.open_connections()))
+            run_task = e.run_task()
+            self._tasks.append(run_task)
 
         self._tasks.extend(self._timer.tasks)
         self._tasks.append(asyncio.ensure_future(self._process_actions()))
