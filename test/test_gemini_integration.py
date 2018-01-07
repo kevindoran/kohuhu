@@ -60,7 +60,6 @@ def test_get_balance(sandbox_exchange):
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
     gemini = GeminiExchange(sandbox=True)
-    await gemini.open_orders_websocket()
     coroutines = gemini.background_coroutines()
     tasks = []
     for c in coroutines:
@@ -79,7 +78,6 @@ async def live_sandbox_exchange(event_loop):
             t.result()
     except asyncio.CancelledError as ex:
         logging.exception(ex)
-    await gemini.close_orders_websocket()
     # I'm not sure if we need to call one or both of these.
     #event_loop.stop()
     #event_loop.close()
@@ -121,6 +119,7 @@ async def live_sandbox_with_order_book(event_loop):
 async def test_market_buy(live_sandbox_exchange):
     """Executes a market bid and checks that the order is registered."""
     gemini = live_sandbox_exchange
+    await gemini.setup_event()
     exchange_state = gemini.exchange_state
 
     bid_amount = Decimal("0.00001")

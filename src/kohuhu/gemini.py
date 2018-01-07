@@ -195,6 +195,7 @@ class GeminiExchange(ExchangeClient):
             self.heartbeat_timestamp_ms = None
             self.ws = None
             self.connected_event = asyncio.Event()
+            self.ready = asyncio.Event()
             self.queue = asyncio.Queue()
 
     standard_exchange_name = "gemini"
@@ -331,8 +332,8 @@ class GeminiExchange(ExchangeClient):
         Using this co-routine is an alternative to waiting synchronously on
         open_connections().
         """
-        await self._market_data_sock_info.connected_event.wait()
-        await self._orders_sock_info.connected_event.wait()
+        await self._market_data_sock_info.ready.wait()
+        await self._orders_sock_info.ready.wait()
 
     # I'm not sure if these two close methods ar needed when the try:finally
     # block is used in the listen methods.
@@ -347,6 +348,7 @@ class GeminiExchange(ExchangeClient):
         await self._orders_sock_info.connected_event.wait()
         try:
             async for message in self._orders_sock_info.ws:
+                self._orders_sock_info.ready.set()
                 if self._orders_sock_info.queue.qsize() >= 100:
                     log.warning("Websocket message queue is has "
                                 f"{self._orders_sock_info.queue.qsize()} pending "
@@ -360,6 +362,7 @@ class GeminiExchange(ExchangeClient):
         await self._market_data_sock_info.connected_event.wait()
         try:
             async for message in self._market_data_sock_info.ws:
+                self._market_data_sock_info.ready.set()
                 if self._market_data_sock_info.queue.qsize() >= 100:
                     log.warning("Websocket message queue is has "
                                 f"{self._market_data_sock_info.queue.qsize()} pending"
