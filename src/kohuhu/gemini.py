@@ -215,7 +215,7 @@ class GeminiExchange(ExchangeClient):
         self._wss_url_base = self.sandbox_wss_url_base if sandbox \
             else self.standard_wss_url_base
         self.exchange_state = ExchangeState(self.exchange_id, self)
-        self._actions = []
+        self._create_actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
         self._market_data_sock_info = self.SocketInfo()
@@ -392,6 +392,7 @@ class GeminiExchange(ExchangeClient):
             if message_list[0]['type'] == 'heartbeat':
                 if has_heartbeat_seq:
                     self._process_heartbeat(message_list[0], socket_info)
+                self._check_sequence(message_list[0], socket_info)
                 continue
             # A non heartbeat message.
             for message in message_list:
@@ -533,8 +534,8 @@ class GeminiExchange(ExchangeClient):
             order_response.update_order(new_order)
             self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
-            for a in self._actions:
-                if id(a) == order_response.client_order_id:
+            for a in self._create_actions:
+                if id(a) == int(order_response.client_order_id):
                     if a.order is not None:
                         raise Exception("An order accept message was received, "
                                         "but its corresponding action already "
@@ -555,8 +556,8 @@ class GeminiExchange(ExchangeClient):
             order_response.update_order(new_order)
             self.exchange_state.set_order(new_order.order_id, new_order)
             found_action = False
-            for a in self._actions:
-                if id(a) == order_response.client_order_id:
+            for a in self._create_actions:
+                if id(a) == int(order_response.client_order_id):
                     if a.order is not None:
                         raise Exception("An order reject message was received, "
                                         "but its corresponding action already "
@@ -635,10 +636,12 @@ class GeminiExchange(ExchangeClient):
             raise Exception(f"An action for exchange '{action.exchange}' was "
                             "given to GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
+            self._create_actions.append(action)
             new_order_path = "/v1/order/new"
             params = self._new_order_parameters(action)
             self._post_http_request(new_order_path, params)
         elif type(action) == exchanges.CancelOrder:
+            self._cancel_actions[action.order_id] = action
             cancel_order_path = "v1/order/cancel"
             params = self._cancel_order_parameters(action)
             self._post_http_request(cancel_order_path, params)
