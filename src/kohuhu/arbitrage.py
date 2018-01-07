@@ -318,11 +318,8 @@ class OneWayPairArbitrage(trader.Algorithm):
 
         Args:
             bid_price (Decimal): the price of the current bid limit order.
-            original_sell_price (Decimal): the price of the original bid limit order.
             new_best_sell_price (Decimal): the latest price recommendation for
                 creating a bid limit order.
-            threshold (Decimal): the % difference between the current and best
-                price over which the order should be cancelled.
         """
         expected_profit_factor = self._calculate_profit_factor(
             self.exchange_buy_on, self.exchange_sell_on, bid_price,
