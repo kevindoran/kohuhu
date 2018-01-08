@@ -1,6 +1,6 @@
 
 class InvalidOperationError(Exception):
-    """Indicates an invalid operation has occurred or the objects's current state"""
+    """Indicates an invalid operation has occurred for the objects's current state"""
     pass
 
 

@@ -21,13 +21,15 @@ class GdaxExchange(ExchangeClient):
     def __init__(self,
                  api_credentials=None,
                  websocket_url=default_websocket_url):
-        """Creates a new Gdax Exchange"""
+        """Creates a new Gdax Exchange
+
+        Attributes:
+            exchange_state    The exchange state
+            order_book_ready  Indicates that this exchange is both connected and has fully populated the orderbook
+        """
         super().__init__(self.exchange_id)
         # Public attributes
-        """The exchange state"""
         self.exchange_state = ExchangeState(self.exchange_id, self)
-
-        """Indicates that this exchange is both connected and has fully populated the orderbook"""
         self.order_book_ready = asyncio.Event()
 
         # Private attributes

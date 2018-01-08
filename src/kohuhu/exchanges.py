@@ -57,7 +57,7 @@ class SortedQuotes:
         return len(self._price_quantity_dict)
 
     def __str__(self):
-        return self._price_quantity_dict.__str__()
+        return str(self._price_quantity_dict)
 
 
 class OrderBook:
@@ -244,8 +244,6 @@ class CreateOrder(Action):
             onto any order actions they return if they wish to access the
             order_id that is created.
     """
-
-
 
     def __init__(self, exchange_id, side, type, amount, price=None):
         super().__init__(exchange_id)
