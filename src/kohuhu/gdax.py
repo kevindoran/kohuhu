@@ -60,14 +60,8 @@ class GdaxExchange(ExchangeClient):
             loop.run_until_complete(gdax.run())
         """
         try:
-            # Open our websocket
-            await self._connect_websocket()
-
             # Group our background coroutines into a single task and wait on this
-            self._background_tasks = asyncio.gather(
-                self._listen_websocket_feed(),
-                self._process_websocket_messages())
-
+            self._background_tasks = self.run_task()
             self._running = True
             try:
                 await self._background_tasks
@@ -79,12 +73,31 @@ class GdaxExchange(ExchangeClient):
                 else:
                     pass
         finally:
-            await self._close_websocket()
+            # Clean up if we have an exception
+            await self.stop()
+
+    def run_task(self):
+        """A lower level version of run() that returns the sub-coroutines used to run
+        the Gdax exchange. You must manually cancel these tasks if you wish to stop the exchange."""
+
+        # Our coroutine that processes messages that the listener coroutine has
+        # added to the queue. This will run forever.
+        process_messages_coro = self._process_websocket_messages()
+
+        async def listen_websocket():
+            # Open our websocket first
+            await self._connect_websocket()
+
+            # Then listen for messages, this will run forever.
+            await self._listen_websocket_feed()
+
+        return asyncio.gather(listen_websocket(), process_messages_coro)
 
     async def stop(self):
         """Stop all background tasks and close the websocket"""
         self._running = False
-        self._background_tasks.cancel()
+        if self._background_tasks is not None:
+            self._background_tasks.cancel()
         await self._close_websocket()
 
     async def _connect_websocket(self):

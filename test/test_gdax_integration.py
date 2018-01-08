@@ -5,13 +5,14 @@ import asyncio
 from kohuhu.custom_exceptions import MockError
 import logging
 
-# Disable debug logging for more comprehensible logs when using -s
-logging.disable(logging.DEBUG)
+# Disable websockets debug logging for more comprehensible logs when using -s
+logger = logging.getLogger('websockets')
+logger.setLevel(logging.ERROR)
 
 credentials.load_credentials('api_credentials.json')
 
 
-@pytest.yield_fixture(scope='module')  # Only create once for all tests
+@pytest.yield_fixture
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_exchange(event_loop):
     """Sets up the real Gdax exchange"""
@@ -55,7 +56,7 @@ def test_gdax_callback_error_propagation():
         loop = asyncio.get_event_loop()
         gdax = GdaxExchange()
         gdax.set_on_change_callback(raise_test_error)
-        run_gdax_task = asyncio.ensure_future(gdax.run())
+        run_gdax_task = asyncio.ensure_future(gdax.run_task())
         loop.run_until_complete(run_gdax_task)
 
 
