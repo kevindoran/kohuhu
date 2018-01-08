@@ -10,22 +10,37 @@ gemini_example_api_key = "abcdefghi"
 
 @pytest.fixture
 def real_credentials():
+    """A bit of a hacky fixture that switches to real credentials then back."""
     credentials.load_credentials("api_credentials.json")
     yield None
     credentials.load_credentials("api_credentials.json.example")
 
-def test_sign(real_credentials):
+
+def test_encode_and_sign(real_credentials):
+    """Tests that _encode_and_sign() produces the correct payload and signature.
+
+    The expected signature and payload were obtained by intercepting a
+    successful REST request made by the test_get_balance() test in
+    test_gemini_integration.py. To recreate the expected signature and payload,
+    run test_get_balance() with proxy mode enabled and intercept the REST
+    request with a tool such as BurpSuite.
+    """
+    # Setup
     payload = {
         'request': '/v1/balances',
         'nonce': 1515123745863
     }
-
     # For REST, the signature should be UTF-8 and the payload should be ASCII.
+    # The b infront of the expected_payload effectively makes it ASCII encoded.
+    # Without b prefix, Python 3 strings default to UTF-8 encoding.
     expected_signature = "6713960635c1996274fc35642084bdedc74a6a483bf35b0c3c2f8c331f1ee427711ae30b61cfc2be856c65a0c849ec52"
     expected_payload = b"eyJyZXF1ZXN0IjogIi92MS9iYWxhbmNlcyIsICJub25jZSI6IDE1MTUxMjM3NDU4NjN9"
-
     gemini = GeminiExchange(sandbox=True)
+
+    # Action
     b64, signature = gemini._encode_and_sign(payload)
+
+    # Check.
     assert expected_signature == signature
     assert b64 == expected_payload
 
@@ -123,12 +138,13 @@ def initial_response():
     }
     return test_response
 
+
 def test_process_initial(initial_response):
     """Test that GeminiExchange creates an order for an 'initial' response."""
     exchange = GeminiExchange()
     # Test that the initial order is added to the exchange state.
     exchange._handle_orders(initial_response)
-    order = exchange.exchange_state().order(initial_response['order_id'])
+    order = exchange.exchange_state.order(initial_response['order_id'])
     assert order
     assert order.order_id == initial_response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
@@ -145,6 +161,7 @@ def test_process_initial(initial_response):
     # an existing order.
     with pytest.raises(Exception):
         exchange._handle_orders(initial_response)
+
 
 @pytest.fixture
 def accepted_limit_bid_response():
@@ -182,11 +199,11 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
     assert order.side == exchanges.Order.Side.BID
@@ -198,9 +215,10 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
+
 
 @pytest.fixture
 def accepted_market_sell_response():
@@ -229,6 +247,7 @@ def accepted_market_sell_response():
     }
     return test_response, action
 
+
 def test_process_accepted_market_sell(accepted_market_sell_response):
     response = accepted_market_sell_response[0]
     action = accepted_market_sell_response[1]
@@ -237,11 +256,11 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
     assert order.side == exchanges.Order.Side.ASK
@@ -252,9 +271,10 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
+
 
 @pytest.fixture
 def rejected_response():
@@ -295,11 +315,11 @@ def test_process_rejected(rejected_response):
     # Test that the initial order is added to the exchange state.
     # Setup
     # First we need to hackily add a fake action to the action list.
-    exchange._actions = [action]
+    exchange._create_actions = [action]
 
     # Action
     exchange._handle_orders(response)
-    order = exchange.exchange_state().order(response['order_id'])
+    order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.CLOSED
     assert order.side == exchanges.Order.Side.BID
@@ -310,7 +330,7 @@ def test_process_rejected(rejected_response):
     assert action.order == order
 
     # Test that an exception is thrown if there is no matching action.
-    exchange._actions = []
+    exchange._create_actions = []
     with pytest.raises(Exception):
         exchange._handle_orders(response)
 
@@ -367,13 +387,13 @@ def test_process_complete_fill(complete_fill_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated and closed.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(0)
     assert order.filled == Decimal(response['executed_amount'])
@@ -447,13 +467,13 @@ def test_process_partial_fill(partial_fill_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated (but still open).
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -514,14 +534,14 @@ def test_process_cancelled(cancelled_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
     exchange._cancel_actions = {order.order_id: cancel_action}
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order is updated and marked as cancelled.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -592,14 +612,14 @@ def test_process_cancel_rejected(cancel_rejected_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
     exchange._cancel_actions = {order.order_id: cancel_action}
 
     # Action
     exchange._handle_orders(response)
 
     # Test that the order values are correct. It should still be open.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.remaining == Decimal(response['remaining_amount'])
     assert order.filled == Decimal(response['executed_amount'])
@@ -668,14 +688,14 @@ def test_process_closed(closed_response):
 
     # Setup
     exchange = GeminiExchange()
-    exchange.exchange_state().set_order(order.order_id, order)
+    exchange.exchange_state.set_order(order.order_id, order)
 
     # Action
     exchange._handle_orders(response)
 
     # Test
     # Test that the order has been marked as closed.
-    order = exchange.exchange_state().order(order.order_id)
+    order = exchange.exchange_state.order(order.order_id)
     assert order
     assert order.status == exchanges.Order.Status.CLOSED
 

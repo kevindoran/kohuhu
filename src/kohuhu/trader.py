@@ -20,7 +20,7 @@ class Algorithm:
     def __init__(self):
         pass
 
-    def initialize(self, state, timer, action_queue):
+    def initialize(self, state, timer, add_action_callback):
         raise NotImplementedError("Subclasses should implement this method.")
 
 
@@ -68,21 +68,19 @@ class Trader:
     gdax = GDaxExchange()
     gemini = GeminiExchange()
     exchanges = [gdax, gemini]
-    trader = Trader(algo, exchanges)
-    # Edit the state here...
-    algorithm.on_tick()
-    actions = trader.timer.action_queue.deque()
-    # check if actions were correct.
+    actions = Queue()
+    algo.initialize(exchanges, DummyTimer(), actions.put)
+    # Then edit the state here.
+    # Then check if actions were correct. They should be in the actions queue.
     """
     def __init__(self, algorithm=None, exchanges=None):
         if not exchanges:
             exchanges = []
         self.state = State()
         self.exchanges = exchanges
-        self.action_queue = []
+        self.action_queue = asyncio.Queue()
         self._algorithm = algorithm
         self._timer = Timer()
-        self._fetchers = {}
         self._loop = None
         self._tasks = []
 
@@ -90,11 +88,32 @@ class Trader:
         """Calls initialize on the algorithm."""
         if self._algorithm:
             self._algorithm.initialize(self.state, self._timer,
-                                       self.action_queue)
+                                       self._add_action)
 
-    def on_update(self):
-        if self._algorithm:
-            self._algorithm.on_data()
+    def _add_action(self, action):
+        """Adds an action to the action queue."""
+        self.action_queue.put_nowait(action)
+
+    def log_updates(self):
+        print("Update received.")
+        # TODO: How to print with logging?
+        #log.info("Update received.")
+
+    async def _process_actions(self):
+        """Call exchange_client.execute() for each action created by the algo.
+        """
+        while True:
+            action = await self.action_queue.get()
+            executed = False
+            for exchange_client in self.exchanges:
+                if action.exchange == exchange_client.exchange_id():
+                    exchange_client.execute(action)
+                    executed = True
+                    break
+            if not executed:
+                raise Exception("An action was created for an exchange that "
+                                "does not have a matching exchange client. "
+                                f"Action: {action}")
 
     def start(self):
         """Starts the trader.
@@ -103,13 +122,13 @@ class Trader:
         set directly.
         """
         for e in self.exchanges:
-            self.state.add_exchange(e.exchange_state())
-            #e.set_on_update_callback(self.on_update)
-            coroutines_for_exchange = e.initialize()
-            for c in coroutines_for_exchange:
-                self._tasks.append(asyncio.ensure_future(c))
+            self.state.add_exchange(e.exchange_state)
+            e.exchange_state.update_publisher.add_callback(self.log_updates)
+            run_task = e.run_task()
+            self._tasks.append(run_task)
 
         self._tasks.extend(self._timer.tasks)
+        self._tasks.append(asyncio.ensure_future(self._process_actions()))
         self._loop = asyncio.get_event_loop()
         try:
             # Run the tasks. If everything works well, this will run forever.
@@ -143,8 +162,8 @@ class Trader:
                 # the timeout period and you'll see:
                 #   "Task was destroyed but it is pending."
                 # as we forcefully kill it.
-            except asyncio.CancelledError:
-                pass
+            except asyncio.CancelledError as ex:
+                log.exception(ex)
                 # If a task does not have an outer try..except that catches
                 # CancelledError then t.result() will raise a CancelledError.
                 # This is fine.
@@ -153,13 +172,10 @@ class Trader:
             self._loop.close()
 
 
-    def add_action(self, action):
-        self.action_queue.append(action)
-
-
 if __name__ == "__main__":
     from kohuhu.gemini import GeminiExchange
     import kohuhu.credentials as credentials
     credentials.load_credentials()
+    # Start the trader without any algorithm set.
     trader = Trader(algorithm=None, exchanges=[GeminiExchange(sandbox=True)])
     trader.start()
