@@ -88,7 +88,7 @@ async def test_market_buy(live_sandbox_exchange):
 
     bid_amount = Decimal("0.00001")
     bid_action = exchanges.CreateOrder("gemini_sandbox",
-                                       exchanges.Order.Side.BID,
+                                       exchanges.Side.BID,
                                        exchanges.Order.Type.MARKET,
                                        amount=bid_amount)
     gemini.execute_action(bid_action)

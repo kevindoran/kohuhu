@@ -148,7 +148,7 @@ def test_process_initial(initial_response):
     assert order
     assert order.order_id == initial_response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
-    assert order.side == exchanges.Order.Side.BID
+    assert order.side == exchanges.Side.BID
     assert order.type == exchanges.Order.Type.LIMIT
     assert order.price == Decimal(initial_response['price'])
     assert order.amount == Decimal(initial_response['original_amount'])
@@ -166,7 +166,7 @@ def test_process_initial(initial_response):
 @pytest.fixture
 def accepted_limit_bid_response():
     amount = Decimal(10)
-    action = exchanges.CreateOrder("gemini", amount, exchanges.Order.Side.BID,
+    action = exchanges.CreateOrder("gemini", amount, exchanges.Side.BID,
                                    exchanges.Order.Type.LIMIT)
     test_response = {
         "type": "accepted",
@@ -206,7 +206,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
-    assert order.side == exchanges.Order.Side.BID
+    assert order.side == exchanges.Side.BID
     assert order.type == exchanges.Order.Type.LIMIT
     assert order.amount == Decimal(response['original_amount'])
     assert order.price == Decimal(response['price'])
@@ -223,7 +223,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
 @pytest.fixture
 def accepted_market_sell_response():
     amount = Decimal(10)
-    action = exchanges.CreateOrder("gemini", amount, exchanges.Order.Side.ASK,
+    action = exchanges.CreateOrder("gemini", amount, exchanges.Side.ASK,
                                    exchanges.Order.Type.MARKET)
     test_response = {
         "type": "accepted",
@@ -263,7 +263,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
     order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.OPEN
-    assert order.side == exchanges.Order.Side.ASK
+    assert order.side == exchanges.Side.ASK
     assert order.type == exchanges.Order.Type.MARKET
     assert order.amount == Decimal(response['original_amount'])
     assert order.average_price == Decimal(response['avg_execution_price'])
@@ -279,7 +279,7 @@ def test_process_accepted_market_sell(accepted_market_sell_response):
 @pytest.fixture
 def rejected_response():
     amount = Decimal(10)
-    action = exchanges.CreateOrder("gemini", amount, exchanges.Order.Side.BID,
+    action = exchanges.CreateOrder("gemini", amount, exchanges.Side.BID,
                                    exchanges.Order.Type.LIMIT)
     test_response = {
         "type": "rejected",
@@ -322,7 +322,7 @@ def test_process_rejected(rejected_response):
     order = exchange.exchange_state.order(response['order_id'])
     assert order.order_id == response['order_id']
     assert order.status == exchanges.Order.Status.CLOSED
-    assert order.side == exchanges.Order.Side.BID
+    assert order.side == exchanges.Side.BID
     assert order.type == exchanges.Order.Type.LIMIT
     assert order.amount == Decimal(response['original_amount'])
     assert order.price == Decimal(response['price'])
@@ -343,7 +343,7 @@ def complete_fill_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.Side.BID
+    order.side = exchanges.Side.BID
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)
@@ -413,7 +413,7 @@ def partial_fill_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.Side.BID
+    order.side = exchanges.Side.BID
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)
@@ -493,7 +493,7 @@ def cancelled_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.Side.BID
+    order.side = exchanges.Side.BID
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)
@@ -570,7 +570,7 @@ def cancel_rejected_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.Side.BID
+    order.side = exchanges.Order.BID
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)
@@ -645,7 +645,7 @@ def closed_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.Side.ASK
+    order.side = exchanges.Side.ASK
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)

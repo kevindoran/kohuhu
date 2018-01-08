@@ -54,7 +54,7 @@ class SortedQuotes:
             self._price_quantity_dict[price] = quantity
 
     def __len__(self):
-        return self._price_quantity_dict.__len__()
+        return len(self._price_quantity_dict)
 
     def __str__(self):
         return self._price_quantity_dict.__str__()
@@ -99,10 +99,6 @@ class Order:
     class Type(Enum):
         LIMIT = auto()
         MARKET = auto()
-
-    class Side(Enum):
-        ASK = auto()
-        BID = auto()
 
     class Status(Enum):
         OPEN = auto()

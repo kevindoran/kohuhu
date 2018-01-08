@@ -6,6 +6,7 @@ from kohuhu.exchanges import Order
 from kohuhu.exchanges import CancelOrder
 from kohuhu.exchanges import Action
 from kohuhu.exchanges import ExchangeState
+from kohuhu.exchanges import Side
 import decimal
 import kohuhu.currency as currency
 from decimal import Decimal
@@ -28,7 +29,7 @@ def create_bid_limit_order(id, price, amount):
     order.order_id = id
     order.price = price
     order.amount = amount
-    order.side = Order.Side.BID
+    order.side = Side.BID
     order.type = Order.Type.LIMIT
     order.filled = Decimal(0)
     order.remaining = amount
@@ -40,7 +41,7 @@ def create_market_ask_order(id, amount):
     order = Order()
     order.id = id
     order.type = Order.Type.MARKET
-    order.side = Order.Side.BID
+    order.side = Side.BID
     order.filled = Decimal(0)
     order.remaining = amount
     order.status = Order.Status.OPEN
@@ -153,7 +154,7 @@ def assert_single_limit_bid(actions, amount=None):
     assert len(actions) == 1
     bid_order_action = actions[0]
     assert bid_order_action.type == Order.Type.LIMIT
-    assert bid_order_action.side == Order.Side.BID
+    assert bid_order_action.side == Side.BID
     assert bid_order_action.exchange == bid_on_exchange
     if amount:
         assert bid_order_action.amount == amount
@@ -168,7 +169,7 @@ def assert_single_market_ask(actions, amount=None):
     assert len(actions) == 1
     ask_order_action = actions[0]
     assert ask_order_action.type == Order.Type.MARKET
-    assert ask_order_action.side == Order.Side.ASK
+    assert ask_order_action.side == Side.ASK
     assert ask_order_action.exchange == ask_on_exchange
     if amount:
         # Only compare to about 9 dp (whatever the BasicContext dp limit is).

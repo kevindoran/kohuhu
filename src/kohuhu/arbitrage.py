@@ -3,6 +3,7 @@ from kohuhu.exchanges import CreateOrder
 from kohuhu.exchanges import CancelOrder
 from kohuhu.exchanges import Action
 from kohuhu.exchanges import Order
+from kohuhu.exchanges import Side
 import kohuhu.exchanges_old as exchanges
 from decimal import Decimal
 import logging
@@ -185,23 +186,23 @@ class OneWayPairArbitrage(trader.Algorithm):
     def _sanity_check_action(self, action):
         # Don't make any market bid orders.
         if action.type == Order.Type.MARKET and \
-                action.side == Order.Side.BID:
+                action.side == Side.BID:
             raise Exception("This algorithm shouldn't be making market bid "
                             "orders.")
         # Don't make any limit ask orders.
         if action.type == Order.Type.LIMIT and \
-                action.side == Order.Side.ASK:
+                action.side == Side.ASK:
             raise Exception("This algorithm shouldn't be making limit ask "
                             "orders.")
         # Don't make asks on the exchange to bid on.
         if action.exchange == self.exchange_buy_on:
-            if action.side == Order.Side.ASK:
+            if action.side == Side.ASK:
                 raise Exception("This algorithm shouldn't be making ask "
                                 "orders on the {} exchange."
                                 .format(self.exchange_buy_on))
         # Don't make bids on the exchange to ask on.
         if action.exchange == self.exchange_sell_on:
-            if action.side == Order.Side.BID:
+            if action.side == Side.BID:
                 raise Exception("This algorithm shouldn't be making bid "
                                 "orders on the {} exchange."
                                 .format(self.exchange_sell_on))
@@ -231,7 +232,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                 self._previous_fill_amount, latest_fill_amount, fill_diff,
                 self.exchange_sell_on))
             market_ask_action = CreateOrder(self.exchange_sell_on,
-                                            Order.Side.ASK, Order.Type.MARKET,
+                                            Side.ASK, Order.Type.MARKET,
                                             amount=fill_diff)
             self._add_action_callback(
                 self._sanity_check_action(market_ask_action))
@@ -286,7 +287,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                                                              decimal.ROUND_DOWN)
         btc_amount = min(btc_amount, max_can_afford)
         # Create and return the action.
-        bid_action = CreateOrder(self.exchange_buy_on, Order.Side.BID,
+        bid_action = CreateOrder(self.exchange_buy_on, Side.BID,
                                  Order.Type.LIMIT, amount=btc_amount,
                                  price=bid_price)
         self._last_limit_order_update_at = data_slice.timestamp
