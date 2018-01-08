@@ -288,7 +288,7 @@ class GdaxExchange(ExchangeClient):
                 raise Exception(err_msg)
 
     def _handle_snapshot(self, order_book_snapshot):
-        """Handles the Gdax snapshot message. This is send shortly after opening the websocket and before
+        """Handles the Gdax snapshot message. This is sent shortly after opening the websocket and before
         any l2_update messages are sent. The snapshot message contains the full snapshot of the orderbook
         at the time it was sent. Any subsequent l2_update messages are delta messages only."""
         log.debug("Received subscription acknowledgement message")

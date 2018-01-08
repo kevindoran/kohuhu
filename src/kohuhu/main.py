@@ -1,32 +1,37 @@
-# DEMO CODE FROM CCXT
+import asyncio
+import time
+import datetime
 
-import ccxt
 
-hitbtc = ccxt.hitbtc({'verbose': True})
-bitmex = ccxt.bitmex()
-huobi  = ccxt.huobi()
-exmo   = ccxt.exmo({
-    'apiKey': 'YOUR_PUBLIC_API_KEY',
-    'secret': 'YOUR_SECRET_PRIVATE_KEY',
-})
+class AsyncCounter:
+    count = 0
+    ready = asyncio.Event()
 
-hitbtc_markets = hitbtc.load_markets()
+    async def count_to_ten(self):
+        for i in range(10):
+            await asyncio.sleep(1)
+            self.count += 1
 
-print(hitbtc.id, hitbtc_markets)
-print(bitmex.id, bitmex.load_markets())
-print(huobi.id, huobi.load_markets())
+            # We consider ourselves ready at 3
+            if self.count == 3:
+                self.ready.set()
 
-print(hitbtc.fetch_order_book(hitbtc.symbols[0]))
-print(bitmex.fetch_ticker('BTC/USD'))
-print(huobi.fetch_trades('LTC/CNY'))
 
-print(exmo.fetch_balance())
+# -- Main 'thread' enters here.
+async_counter = AsyncCounter()
 
-# sell one ฿ for market price and receive $ right now
-print(exmo.id, exmo.create_market_sell_order('BTC/USD', 1))
+# -- Main 'thread' schedules this future to be run when, and if, we run the default event loop.
+asyncio.ensure_future(async_counter.count_to_ten())
+print(f"Time after scheduling count: {datetime.datetime.now()}")
 
-# limit buy BTC/EUR, you pay €2500 and receive ฿1  when the order is closed
-print(exmo.id, exmo.create_limit_buy_order('BTC/EUR', 1, 2500.00))
+time.sleep(5)
+print(f"Time after main sleep: {datetime.datetime.now()}")
 
-# pass/redefine custom exchange-specific order params: type, amount, price, flags, etc...
-kraken.create_market_buy_order('BTC/USD', 1, {'trading_agreement': 'agree'})
+# -- run_until_complete() triggers stuff in the event loop and 'blocks' the main 'thread' until
+#    the passed parameter returns.
+asyncio.get_event_loop().run_until_complete(async_counter.ready.wait())
+
+print(f"Time after event_loop block: {datetime.datetime.now()}")
+print(f"Count: {async_counter.count}")
+
+

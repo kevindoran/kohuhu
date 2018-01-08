@@ -2,7 +2,7 @@ from kohuhu.exchanges import *
 
 
 def test_sorted_quotes_bids():
-    """Test the the SortedQuotes data structure correctly orders quotes"""
+    """Test that the SortedQuotes data structure correctly orders bid quotes"""
     # -- Setup --
     bids = SortedQuotes(Side.BID)
     bid_high = Quote(price=Decimal(10000), quantity=Decimal(3.14))
@@ -31,7 +31,7 @@ def test_sorted_quotes_bids():
 
 
 def test_sorted_quotes_asks():
-    """Test the the SortedQuotes data structure correctly orders quotes"""
+    """Test that the SortedQuotes data structure correctly orders ask quotes"""
     # -- Setup --
     asks = SortedQuotes(Side.ASK)
     ask_high = Quote(price=Decimal(10000), quantity=Decimal(3.14))

@@ -12,7 +12,7 @@ logger.setLevel(logging.ERROR)
 credentials.load_credentials('api_credentials.json')
 
 
-@pytest.yield_fixture
+@pytest.fixture
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_exchange(event_loop):
     """Sets up the real Gdax exchange"""
@@ -28,7 +28,7 @@ async def gdax_exchange(event_loop):
     await run_gdax_task  # This will propagate any exceptions.
 
 
-@pytest.yield_fixture(scope='module')  # Only create once for all tests
+@pytest.fixture
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_sandbox_exchange(event_loop):
     """Sets up the sandbox Gdax exchange"""
