@@ -28,6 +28,11 @@ class SortedQuotes:
             >> bids[0]
                 [price=600, quantity=1]
         """
+        # We use a dictionary because when we get an update message it contains only the price levels
+        # where the quantity has changed. To afford an efficient update we want to be able to lookup
+        # a specific price in O(1) time without having to iterate over the entire orderbook.
+        # We need it to be sorted so that we can use bids[0] to get the highest bid etc.
+        # bid_quotes are ordered in reverse because the first element should have the highest price.
         if side == Side.BID:
             self._price_quantity_dict = SortedDict(operator.neg)
         elif side == Side.ASK:

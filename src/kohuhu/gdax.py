@@ -15,27 +15,29 @@ log = logging.getLogger(__name__)
 
 
 class GdaxExchange(ExchangeClient):
+    exchange_id = 'gdax'
     default_websocket_url = 'wss://ws-feed.gdax.com'
 
     def __init__(self,
                  api_credentials=None,
                  websocket_url=default_websocket_url):
         """Creates a new Gdax Exchange"""
-        super().__init__()
+        super().__init__(self.exchange_id)
         # Public attributes
-        self._exchange_state = ExchangeState('gdax', self)
+        """The exchange state"""
+        self.exchange_state = ExchangeState(self.exchange_id, self)
 
         """Indicates that this exchange is both connected and has fully populated the orderbook"""
         self.order_book_ready = asyncio.Event()
 
         # Private attributes
-        self._websocket_url = websocket_url
         self._channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
         self._symbol = 'BTC-USD'
+        self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
-        self._on_update_callback = lambda: None
         self._background_tasks = None
+        self._on_update_callback = lambda: None
 
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
@@ -44,9 +46,6 @@ class GdaxExchange(ExchangeClient):
         self._last_sequence_number = None
 
         self._running = False
-
-    async def _check_if_should_stop(self):
-        await self._should_stop.wait()
 
     def set_on_change_callback(self, callback):
         """Sets the callback that is invoked when the state of the exchange
@@ -88,9 +87,6 @@ class GdaxExchange(ExchangeClient):
         self._background_tasks.cancel()
         await self._close_websocket()
 
-    def exchange_state(self):
-        return self._exchange_state
-
     async def _connect_websocket(self):
         """
         Open the websocket feed to Gdax for all market data updates, orders
@@ -130,7 +126,6 @@ class GdaxExchange(ExchangeClient):
         """
         Builds the subscribe parameters dictionary, including the authenticate parameters
         if authentication is enabled.
-        :return: A dict of subscribe parameters.
         """
         subscribe_params = {
             'type': 'subscribe',
@@ -147,7 +142,6 @@ class GdaxExchange(ExchangeClient):
         """
         Builds the authenticate parameters that when included with a subscribe message
         will authenticate the client against the gdax websocket.
-        :return: A dict of auth parameters.
         """
         timestamp = str(time.time())
         message = timestamp + 'GET' + '/users/self/verify'
@@ -182,16 +176,17 @@ class GdaxExchange(ExchangeClient):
             # Call the callback, our orderbook is now up to date.
             self._on_update_callback()
 
-    def _handle_message(self, message):
-        """TODO"""
-        response = json.loads(message)
-        response_type = response['type']
+    def _handle_message(self, msg):
+        """The main handler for all websocket messages. This method will call
+        the appropriate sub-handler based on the message type."""
+        message = json.loads(msg)
+        response_type = message['type']
 
         if response_type == 'snapshot':
-            self._handle_snapshot(response)
+            self._handle_snapshot(message)
 
         elif response_type == 'subscriptions':
-            self._handle_subscriptions(response)
+            self._handle_subscriptions(message)
 
         elif response_type == 'heartbeat':
             pass
@@ -199,8 +194,7 @@ class GdaxExchange(ExchangeClient):
             #self._handle_heartbeat(response)
 
         elif response_type == 'l2update':
-            print(".", end="", flush=True)
-            self._handle_l2_update(response)
+            self._handle_l2_update(message)
 
         # Valid orders sent to the matching engine are confirmed immediately and are in the received state.
         # If an order executes against another order immediately, the order is considered done.
@@ -209,15 +203,15 @@ class GdaxExchange(ExchangeClient):
         # filled by new orders. Orders that are no longer eligible for matching (filled or canceled)
         # are in the done state.
         elif response_type == 'received':
-            self._handle_order(response)
+            self._handle_order(message)
         elif response_type == 'open':
-            self._handle_order(response)
+            self._handle_order(message)
         elif response_type == 'done':
-            self._handle_order(response)
+            self._handle_order(message)
         elif response_type == 'match':
-            self._handle_order(response)
+            self._handle_order(message)
         elif response_type == 'change':
-            self._handle_order(response)
+            self._handle_order(message)
         else:
             error_message = f"Got unexpected response: {response_type}"
             raise Exception(error_message)
@@ -251,7 +245,7 @@ class GdaxExchange(ExchangeClient):
 
     def _handle_order(self, order):
         """TODO"""
-        print(order)
+        raise NotImplementedError("Order handling has not been implemented")
 
     def _handle_subscriptions(self, subscriptions):
         """Check that the subscription acknowledgement message matches our subscribe request"""
@@ -279,36 +273,35 @@ class GdaxExchange(ExchangeClient):
                 raise Exception(err_msg)
 
     def _handle_snapshot(self, order_book_snapshot):
-        """TODO"""
+        """Handles the Gdax snapshot message. This is send shortly after opening the websocket and before
+        any l2_update messages are sent. The snapshot message contains the full snapshot of the orderbook
+        at the time it was sent. Any subsequent l2_update messages are delta messages only."""
         log.debug("Received subscription acknowledgement message")
 
         bids = order_book_snapshot['bids']
         asks = order_book_snapshot['asks']
 
-        # We use a dictionary because when we get an update message it contains only the price levels
-        # where the quantity has changed. To afford an efficient update we want to be able to lookup
-        # a specific price in O(1) time without having to iterate over the entire orderbook.
-        # We need it to be sorted so that we can use bids[0] to get the highest bid etc.
-        # bid_quotes are ordered in reverse because the first element should have the highest price.
         for bid in bids:
             # gdax uses [price, quantity]
             bid_price = Decimal(bid[0])
             bid_quantity = Decimal(bid[1])
             bid_quote = Quote(price=bid_price, quantity=bid_quantity)
-            self._exchange_state.order_book().bids().set_quote(bid_quote)
+            self.exchange_state.order_book().bids().set_quote(bid_quote)
 
         for ask in asks:
             ask_price = Decimal(ask[0])
             ask_quantity = Decimal(ask[1])
             ask_quote = Quote(price=ask_price, quantity=ask_quantity)
-            self._exchange_state.order_book().asks().set_quote(ask_quote)
+            self.exchange_state.order_book().asks().set_quote(ask_quote)
 
         # After having received a snapshot response, we consider the exchange orderbook
         # to be ready.
         self.order_book_ready.set()
 
     def _handle_l2_update(self, order_book_update):
-        """TODO"""
+        """L2_Update messages contain a change in the orderbook. Specifically, for any quote price that
+        has changed, they include this price along with the new quantity at that price level. If a price
+        level is removed, the quantity will be zero."""
         changes = order_book_update['changes']
         for change in changes:
             side = change[0]  # Either 'buy' or 'sell'
@@ -317,67 +310,8 @@ class GdaxExchange(ExchangeClient):
             quote = Quote(price=price, quantity=quantity)
 
             if side == 'buy':
-                self._exchange_state.order_book().bids().set_quote(quote)
+                self.exchange_state.order_book().bids().set_quote(quote)
             elif side == 'sell':
-                self._exchange_state.order_book().asks().set_quote(quote)
+                self.exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
-
-
-
-
-if __name__ == "main":
-    last_printed_percent = Decimal(10)
-    def on_data():
-        # Update slice
-        # Call algorithm
-
-        global last_printed_percent
-
-
-        #gdax_best_bid = gdax.exchange_stateorder_book.bids.iloc[0]
-
-        # Can we buy on gemini & sell on gdax for a profit?
-        diff = Decimal(16000) - 15000
-        percent = diff / 15000 * 100
-
-        if abs(percent - last_printed_percent) > 0.01:
-            last_printed_percent = percent
-            print("")
-            if percent > 0:
-                print(f"Profit! Difference is: {percent:.2f}")
-            else:
-                print(f":( Difference is: {percent:.2f}")
-
-
-    def exchange_offline(message):
-        # Do something!
-        print(message)
-
-    # Main event loop
-    loop = asyncio.get_event_loop()
-
-
-    from kohuhu import credentials
-    credentials.load_credentials("../../api_credentials.json")
-    creds = credentials.credentials_for('gdax')
-
-
-    # Create our exchanges, these take an on_data callback every time the order book is updated
-    # print("Connecting to gemini orderbook websocket. Every '*' is a gemini orderbook update.")
-    # gemini = GeminiExchange(on_data, exchange_offline)
-    print("Connecting to gdax orderbook websocket. Every '.' is a gdax orderbook update.")
-    gdax = GdaxExchange()
-    gdax.set_on_change_callback(on_data)
-
-    async def send_orders_when_ready():
-        print("Order book not yet ready")
-        await gdax.order_book_ready.wait()
-        print("Order book is now ready")
-
-    try:
-        asyncio.ensure_future(send_orders_when_ready())
-        loop.run_until_complete(gdax.run())
-    finally:
-        loop.stop()
-        loop.close()
