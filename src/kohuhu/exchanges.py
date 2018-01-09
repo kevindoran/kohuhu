@@ -90,6 +90,7 @@ class Quote:
     def __str__(self):
         return f"[price={self.price}, quantity={self.quantity}]"
 
+
 class Order:
     """Represents an order placed on an exchange.
 

@@ -18,7 +18,6 @@ async def gdax_exchange(event_loop):
     """Sets up the real Gdax exchange"""
     creds = credentials.credentials_for('gdax', owner="tim")
     gdax = GdaxExchange(api_credentials=creds)
-    gdax.set_on_change_callback(lambda: None)
     run_gdax_task = asyncio.ensure_future(gdax.run(), loop=event_loop)
     await gdax.order_book_ready.wait()
     yield gdax
@@ -35,7 +34,6 @@ async def gdax_sandbox_exchange(event_loop):
     sandbox_url = 'wss://ws-feed-public.sandbox.gdax.com'
     creds = credentials.credentials_for('gdax_sandbox', owner="tim")
     gdax = GdaxExchange(api_credentials=creds, websocket_url=sandbox_url)
-    gdax.set_on_change_callback(lambda: None)
     run_gdax_task = asyncio.ensure_future(gdax.run(), loop=event_loop)
     await gdax.order_book_ready.wait()
     yield gdax

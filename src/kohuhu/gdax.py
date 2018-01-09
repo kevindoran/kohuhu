@@ -38,7 +38,7 @@ class GdaxExchange(ExchangeClient):
         self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
-        self._background_tasks = None
+        self._background_task = None
         self._on_update_callback = lambda: None
 
         self._api_credentials = api_credentials
@@ -55,18 +55,17 @@ class GdaxExchange(ExchangeClient):
         self._on_update_callback = callback
 
     async def run(self):
-        """
-        Run this Gdax exchange, listening for and processing websocket messages.
+        """Run this Gdax exchange, listening for and processing websocket messages.
 
         Usage:
             loop.run_until_complete(gdax.run())
         """
         try:
             # Group our background coroutines into a single task and wait on this
-            self._background_tasks = self.run_task()
+            self._background_task = self.run_task()
             self._running = True
             try:
-                await self._background_tasks
+                await self._background_task
             except asyncio.CancelledError:
                 # A cancelled error is expected if we've called stop(). Confirm
                 # this is the case by checking if we are still running.
@@ -79,8 +78,8 @@ class GdaxExchange(ExchangeClient):
             await self.stop()
 
     def run_task(self):
-        """A lower level version of run() that returns the sub-coroutines used to run
-        the Gdax exchange. You must manually cancel these tasks if you wish to stop the exchange."""
+        """A lower level version of run() that returns the sub-coroutines future used to run
+        the Gdax exchange. You must manually cancel this future if you wish to stop the exchange."""
 
         # Our coroutine that processes messages that the listener coroutine has
         # added to the queue. This will run forever.
@@ -98,8 +97,8 @@ class GdaxExchange(ExchangeClient):
     async def stop(self):
         """Stop all background tasks and close the websocket"""
         self._running = False
-        if self._background_tasks is not None:
-            self._background_tasks.cancel()
+        if self._background_task is not None:
+            self._background_task.cancel()
         await self._close_websocket()
 
     async def _connect_websocket(self):
@@ -204,9 +203,7 @@ class GdaxExchange(ExchangeClient):
             self._handle_subscriptions(message)
 
         elif response_type == 'heartbeat':
-            pass
-            #TODO: for some reason the sequence number does not match our counts.
-            #self._handle_heartbeat(response)
+            self._handle_heartbeat(message)
 
         elif response_type == 'l2update':
             self._handle_l2_update(message)
@@ -232,7 +229,8 @@ class GdaxExchange(ExchangeClient):
             raise Exception(error_message)
 
     def _handle_heartbeat(self, heartbeat):
-        """
+        """Handles the heartbeat message, validating the websocket stream has not dropped messages.
+
         Checks that the sequence number in the heartbeat message matches the number of
         messages that we have received over the websocket channel.
         If there is a mismatch, an exception will be raised.
@@ -249,8 +247,8 @@ class GdaxExchange(ExchangeClient):
         # Otherwise check that the difference in the sequence numbers matches our count.
         expected_messages_received = current_sequence_number - self._last_sequence_number
         if expected_messages_received != self._received_message_count:
-            error_message = f"Expected {expected_messages_received} but only received " \
-                            f"{self._received_message_count} since last heartbeat"
+            error_message = f"Heartbeat sequence number increase of {expected_messages_received} did not match " \
+                            f"internal count of websocket messages of {self._received_message_count}"
             log.error(error_message)
             raise Exception(error_message)
 
