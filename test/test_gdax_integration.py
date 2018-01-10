@@ -12,13 +12,21 @@ logger.setLevel(logging.ERROR)
 credentials.load_credentials('api_credentials.json')
 
 
-@pytest.fixture
+@pytest.yield_fixture(scope='module')  # This scope needs to be >= any async fixtures.
+def event_loop():
+    """Yield the default event loop."""
+    loop = asyncio.get_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope='module')
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
-async def gdax_exchange(event_loop):
+async def gdax_exchange():
     """Sets up the real Gdax exchange"""
     creds = credentials.credentials_for('gdax', owner="tim")
     gdax = GdaxExchange(api_credentials=creds)
-    run_gdax_task = asyncio.ensure_future(gdax.run(), loop=event_loop)
+    run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
 
@@ -27,14 +35,14 @@ async def gdax_exchange(event_loop):
     await run_gdax_task  # This will propagate any exceptions.
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
-async def gdax_sandbox_exchange(event_loop):
+async def gdax_sandbox_exchange():
     """Sets up the sandbox Gdax exchange"""
     sandbox_url = 'wss://ws-feed-public.sandbox.gdax.com'
     creds = credentials.credentials_for('gdax_sandbox', owner="tim")
     gdax = GdaxExchange(api_credentials=creds, websocket_url=sandbox_url)
-    run_gdax_task = asyncio.ensure_future(gdax.run(), loop=event_loop)
+    run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
 
@@ -99,6 +107,3 @@ def test_valid_orderbook(gdax_exchange):
         f"best_bid had quantity {best_bid.quantity} which is > than expected {max_expected_quote_quantity}"
     assert best_ask.quantity < max_expected_quote_quantity, \
         f"best_ask had quantity {best_ask.quantity} which is > than expected {max_expected_quote_quantity}"
-
-
-
