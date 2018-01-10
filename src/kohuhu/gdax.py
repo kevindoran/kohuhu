@@ -45,6 +45,8 @@ class GdaxExchange(ExchangeClient):
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
 
+        self._exchange_latency_limit = 10  # Seconds we are willing to be behind the exchange (+ the interval below)
+        self._exchange_latency_check_interval = 5  # How often we check if we've gone beyond this limit
         self._last_heartbeat_time = None
 
         self._running = False
@@ -231,17 +233,12 @@ class GdaxExchange(ExchangeClient):
     def _handle_heartbeat(self, heartbeat):
         """Handles the heartbeat message, validating the websocket stream is functioning correctly.
 
-        This method does two checks:
-         1. Checks that the "time" value of the last heartbeat was not >1.5 seconds ago.
-         2. Checks that the "time" value of this heartbeat is not more than 10 seconds old.
-
-         The first check ensures that no heartbeats have been dropped, as they are sent every 1 second.
-         The second check ensures that the latency between our processing of the exchange, and the real state of
-         the exchange, is not too large. A large latency could indicate network issues, too much processing,
-         or an issue with Gdax.
-         Note: heartbeats also come with a sequence number. This is only useful when consuming the 'full'
-         subscription because it only counts the number of messages sent on that subscription regardless of
-         what you have subscribed to.
+        This method checks that the 'time' value of successive heartbeats is no greater than 1.5 seconds
+        or less than 0.5 seconds. This ensures that no heartbeats have been dropped, as they are sent
+        every 1 second.
+        Note: heartbeats also come with a sequence number. This is only useful when consuming the 'full'
+        subscription because it only counts the number of messages sent on that subscription regardless of
+        what you have subscribed to.
 
         """
         heartbeat_time = datetime.datetime.strptime(heartbeat['time'], "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -257,15 +254,6 @@ class GdaxExchange(ExchangeClient):
         if delta < datetime.timedelta(seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
             error_message = f"Heartbeat time value <0.5s or > 1.5s from last heartbeat time value. " \
                             f"Last value: {self._last_heartbeat_time}, current value: {heartbeat_time}"
-            log.error(error_message)
-            raise Exception(error_message)
-
-        # Check that this heartbeat is not more  than 10 seconds old
-        utc_now = datetime.datetime.utcnow()
-        latency = utc_now - heartbeat_time
-        if latency > datetime.timedelta(seconds=10):
-            error_message = f"Heartbeat time value was {heartbeat_time} which is more than 10 seconds behind " \
-                            f"utcnow() which is {utc_now}"
             log.error(error_message)
             raise Exception(error_message)
 
@@ -348,18 +336,20 @@ class GdaxExchange(ExchangeClient):
     async def _watchdog(self):
         """A continuously running method that periodically checks that a heartbeat message has been received
         recently.
+
+        This check ensures that the latency between our processing of the exchange, and the real state of
+        the exchange, is not too large. A large latency could indicate network issues, too much processing,
+        or an issue with Gdax.
         """
-        time_allowed_with_no_heartbeat = 30  # seconds
-        loop_interval = 10  # seconds
         while True:
-            await asyncio.sleep(loop_interval)
+            await asyncio.sleep(self._exchange_latency_check_interval)
             if self._last_heartbeat_time is None:
                 # We haven't started yet.
                 continue
             utc_now = datetime.datetime.utcnow()
             time_since_last_heartbeat = utc_now - self._last_heartbeat_time
-            if time_since_last_heartbeat > datetime.timedelta(seconds=time_allowed_with_no_heartbeat):
-                error_message = f"No heartbeat message received in the last {time_since_last_heartbeat} " \
+            if time_since_last_heartbeat > datetime.timedelta(seconds=self._exchange_latency_limit):
+                error_message = f"No heartbeat message processed in the last {time_since_last_heartbeat} " \
                                 f"seconds. Time now:{utc_now}, last heartbeat: {self._last_heartbeat_time}"
                 log.error(error_message)
                 raise Exception(error_message)
