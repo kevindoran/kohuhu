@@ -226,8 +226,14 @@ class GdaxExchange(ExchangeClient):
             self._handle_order(message)
         elif response_type == 'change':
             self._handle_order(message)
+
+        # Finally, error handling.
+        elif response_type == 'error':
+            self._handle_error(message)
         else:
             error_message = f"Got unexpected response: {response_type}"
+            log.error(error_message)
+            log.error(message)
             raise Exception(error_message)
 
     def _handle_heartbeat(self, heartbeat):
@@ -332,6 +338,18 @@ class GdaxExchange(ExchangeClient):
                 self.exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
+
+    def _handle_error(self, error):
+        """Handles Gdax error messages.
+
+        Websocket messages with type 'error' are used to indicate something has gone wrong.
+        We will raise an exception if we receive one of these messages.
+        """
+        response_message = error['message']
+        error_message = f"Received error message on websocket: {response_message}"
+        log.error(error_message)
+        log.error(error)  # Log the entire message, in case it has other fields
+        raise Exception(error_message)
 
     async def _watchdog(self):
         """A continuously running method that periodically checks that a heartbeat message has been received
