@@ -1,6 +1,5 @@
 import kohuhu.exchanges as exchanges
-from kohuhu.exchanges import ExchangeClient
-from kohuhu.exchanges import ExchangeState
+from kohuhu.exchanges import ExchangeClient, ExchangeState, Quote
 import kohuhu.encryption as encryption
 import asyncio
 import base64
@@ -120,9 +119,9 @@ class OrderResponse:
         response.symbol = json_dict['symbol']
         # side
         if json_dict['side'] == 'sell':
-            response.side = exchanges.Order.Side.ASK
+            response.side = exchanges.Side.ASK
         elif json_dict['side'] == 'buy':
-            response.side = exchanges.Order.Side.BID
+            response.side = exchanges.Side.BID
         else:
             raise Exception(f"Unexpected order side: {json_dict['side']}.")
         # behaviour
@@ -498,12 +497,11 @@ class GeminiExchange(ExchangeClient):
             side = event['side']
             price = Decimal(event['price'])
             quantity = Decimal(event['remaining'])
+            quote = Quote(price=price, quantity=quantity)
             if side == 'bid':
-                self.exchange_state.order_book().set_bids_remaining(price,
-                                                                    quantity)
+                self.exchange_state.order_book().bids().set_quote(quote)
             elif side == 'ask':
-                self.exchange_state.order_book().set_asks_remaining(price,
-                                                                    quantity)
+                self.exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
         return True
@@ -682,7 +680,7 @@ class GeminiExchange(ExchangeClient):
         parameters['amount'] = str(create_order_action.amount)
         parameters['symbol'] = "btcusd"
         parameters['side'] = 'buy' if create_order_action.side == \
-            exchanges.Order.Side.BID else 'sell'
+            exchanges.Side.BID else 'sell'
         # The only supported type is a limit order.
         parameters['type'] = 'exchange limit'
         # A market order needs to be carried out as a limit order.
@@ -691,7 +689,7 @@ class GeminiExchange(ExchangeClient):
             # TODO: there is an opportunity to provide extra safety.
             temp_max_price = "1000000" # $1 million
             temp_min_price = "0"
-            if create_order_action.side == exchanges.Order.Side.BID:
+            if create_order_action.side == exchanges.Side.BID:
                 parameters['price'] = temp_max_price
             else:
                 parameters['price'] = temp_min_price
