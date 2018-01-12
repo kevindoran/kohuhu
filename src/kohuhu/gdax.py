@@ -10,6 +10,7 @@ import hmac
 import hashlib
 from kohuhu.custom_exceptions import InvalidOperationError
 import asyncio
+import datetime
 
 log = logging.getLogger(__name__)
 
@@ -38,14 +39,15 @@ class GdaxExchange(ExchangeClient):
         self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
-        self._background_tasks = None
+        self._background_task = None
         self._on_update_callback = lambda: None
 
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
 
-        self._received_message_count = 0
-        self._last_sequence_number = None
+        self._exchange_latency_limit = 10  # Seconds we are willing to be behind the exchange (+ the interval below)
+        self._exchange_latency_check_interval = 5  # How often we check if we've gone beyond this limit
+        self._last_heartbeat_time = None
 
         self._running = False
 
@@ -55,18 +57,17 @@ class GdaxExchange(ExchangeClient):
         self._on_update_callback = callback
 
     async def run(self):
-        """
-        Run this Gdax exchange, listening for and processing websocket messages.
+        """Run this Gdax exchange, listening for and processing websocket messages.
 
         Usage:
             loop.run_until_complete(gdax.run())
         """
         try:
             # Group our background coroutines into a single task and wait on this
-            self._background_tasks = self.run_task()
+            self._background_task = self.run_task()
             self._running = True
             try:
-                await self._background_tasks
+                await self._background_task
             except asyncio.CancelledError:
                 # A cancelled error is expected if we've called stop(). Confirm
                 # this is the case by checking if we are still running.
@@ -79,12 +80,15 @@ class GdaxExchange(ExchangeClient):
             await self.stop()
 
     def run_task(self):
-        """A lower level version of run() that returns the sub-coroutines used to run
-        the Gdax exchange. You must manually cancel these tasks if you wish to stop the exchange."""
+        """A lower level version of run() that returns the sub-coroutines future used to run
+        the Gdax exchange. You must manually cancel this future if you wish to stop the exchange."""
 
         # Our coroutine that processes messages that the listener coroutine has
         # added to the queue. This will run forever.
         process_messages_coro = self._process_websocket_messages()
+
+        # Checks that we're still receiving messages on the websocket.
+        watchdog_coro = self._watchdog()
 
         async def listen_websocket():
             # Open our websocket first
@@ -93,13 +97,13 @@ class GdaxExchange(ExchangeClient):
             # Then listen for messages, this will run forever.
             await self._listen_websocket_feed()
 
-        return asyncio.gather(listen_websocket(), process_messages_coro)
+        return asyncio.gather(listen_websocket(), process_messages_coro, watchdog_coro)
 
     async def stop(self):
         """Stop all background tasks and close the websocket"""
         self._running = False
-        if self._background_tasks is not None:
-            self._background_tasks.cancel()
+        if self._background_task is not None:
+            self._background_task.cancel()
         await self._close_websocket()
 
     async def _connect_websocket(self):
@@ -130,8 +134,6 @@ class GdaxExchange(ExchangeClient):
         try:
             # This blocks waiting for a new websocket message
             async for message in self._websocket:
-                if self._message_queue.qsize() >= 100:
-                    log.warning(f"Websocket message queue is has {self._message_queue.qsize()} pending messages")
                 await self._message_queue.put(message)
         except websockets.exceptions.InvalidStatusCode as ex:
             if str(ex.status_code).startswith("5"):
@@ -181,7 +183,6 @@ class GdaxExchange(ExchangeClient):
         will only be called once"""
         while True:
             message = await self._message_queue.get()
-            self._received_message_count += 1
             self._handle_message(message)
             if not self._message_queue.empty():
                 # If we've already got another update, then update our
@@ -204,9 +205,7 @@ class GdaxExchange(ExchangeClient):
             self._handle_subscriptions(message)
 
         elif response_type == 'heartbeat':
-            pass
-            #TODO: for some reason the sequence number does not match our counts.
-            #self._handle_heartbeat(response)
+            self._handle_heartbeat(message)
 
         elif response_type == 'l2update':
             self._handle_l2_update(message)
@@ -232,31 +231,34 @@ class GdaxExchange(ExchangeClient):
             raise Exception(error_message)
 
     def _handle_heartbeat(self, heartbeat):
-        """
-        Checks that the sequence number in the heartbeat message matches the number of
-        messages that we have received over the websocket channel.
-        If there is a mismatch, an exception will be raised.
-        """
-        log.debug("Received heartbeat message")
-        current_sequence_number = heartbeat['sequence']
+        """Handles the heartbeat message, validating the websocket stream is functioning correctly.
 
-        # If this is the first heartbeat, start counting websocket messages from now.
-        if self._last_sequence_number is None:
-            self._last_sequence_number = current_sequence_number
-            self._received_message_count = 0
+        This method checks that the 'time' value of successive heartbeats is no greater than 1.5 seconds
+        or less than 0.5 seconds. This ensures that no heartbeats have been dropped, as they are sent
+        every 1 second.
+        Note: heartbeats also come with a sequence number. This is only useful when consuming the 'full'
+        subscription because it only counts the number of messages sent on that subscription regardless of
+        what you have subscribed to.
+
+        """
+        heartbeat_time = datetime.datetime.strptime(heartbeat['time'], "%Y-%m-%dT%H:%M:%S.%fZ")
+        log.debug(f"Received heartbeat with time: {heartbeat_time}")
+
+        # This is the first heartbeat, just set our last time value and return.
+        if self._last_heartbeat_time is None:
+            self._last_heartbeat_time = heartbeat_time
             return
 
-        # Otherwise check that the difference in the sequence numbers matches our count.
-        expected_messages_received = current_sequence_number - self._last_sequence_number
-        if expected_messages_received != self._received_message_count:
-            error_message = f"Expected {expected_messages_received} but only received " \
-                            f"{self._received_message_count} since last heartbeat"
+        # Check that this heartbeat is within 0.5 - 1.5s of the last.
+        delta = heartbeat_time - self._last_heartbeat_time
+        if delta < datetime.timedelta(seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
+            error_message = f"Heartbeat time value <0.5s or > 1.5s from last heartbeat time value. " \
+                            f"Last value: {self._last_heartbeat_time}, current value: {heartbeat_time}"
             log.error(error_message)
             raise Exception(error_message)
 
-        # Reset the counts for the next heartbeat
-        self._last_sequence_number = current_sequence_number
-        self._received_message_count = 0
+        # Set the new last heartbeat time.
+        self._last_heartbeat_time = heartbeat_time
 
     def _handle_order(self, order):
         """TODO"""
@@ -330,3 +332,24 @@ class GdaxExchange(ExchangeClient):
                 self.exchange_state.order_book().asks().set_quote(quote)
             else:
                 raise Exception("Unexpected update side: " + side)
+
+    async def _watchdog(self):
+        """A continuously running method that periodically checks that a heartbeat message has been received
+        recently.
+
+        This check ensures that the latency between our processing of the exchange, and the real state of
+        the exchange, is not too large. A large latency could indicate network issues, too much processing,
+        or an issue with Gdax.
+        """
+        while True:
+            await asyncio.sleep(self._exchange_latency_check_interval)
+            if self._last_heartbeat_time is None:
+                # We haven't started yet.
+                continue
+            utc_now = datetime.datetime.utcnow()
+            time_since_last_heartbeat = utc_now - self._last_heartbeat_time
+            if time_since_last_heartbeat > datetime.timedelta(seconds=self._exchange_latency_limit):
+                error_message = f"No heartbeat message processed in the last {time_since_last_heartbeat} " \
+                                f"seconds. Time now:{utc_now}, last heartbeat: {self._last_heartbeat_time}"
+                log.error(error_message)
+                raise Exception(error_message)
