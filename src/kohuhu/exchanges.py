@@ -253,6 +253,10 @@ class CreateOrder(Action):
         self.side = side
         self.type = type
         self.order = None
+        if side == Order.Type.LIMIT and price is None:
+            raise Exception("Price must be specified when making a limit "
+                            "order.")
+
         # Note: this property might move to the Action class.
         self.status = self.Status.PENDING
 
