@@ -16,7 +16,7 @@ logger.setLevel(logging.ERROR)
 credentials.load_credentials('api_credentials.json')
 
 
-# test.common.enableProxy()
+test.common.enableProxy()
 
 @pytest.yield_fixture(scope='module')  # This scope needs to be >= any async fixtures.
 def event_loop():
@@ -132,3 +132,12 @@ async def test_execute_action(gdax_sandbox_exchange):
     gdax.execute_action(bid_limit_action)
     success = await wait_until(lambda: len(gdax.exchange_state._orders))
     assert success
+
+
+@pytest.mark.asyncio
+async def test_get_balance(gdax_sandbox_exchange):
+    gdax_sandbox_exchange.update_balance()
+    balance = gdax_sandbox_exchange.exchange_state.balance()
+    assert balance
+    assert balance.free("USD") > Decimal(0)
+    assert balance.free("BTC") > Decimal(0)

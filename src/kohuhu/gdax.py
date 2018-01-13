@@ -405,7 +405,8 @@ class GdaxExchange(ExchangeClient):
     def _send_http_request(self, path, json_body=None, method='post'):
         url = self._rest_url + path
         function_to_call = getattr(requests, method)
-        response = function_to_call(url, data=json.dumps(json_body),#json=json_body,
+        data = json.dumps(json_body) if json_body else None
+        response = function_to_call(url, data=data,
                                     auth=self._coinbase_authenticator)
         if response.status_code != requests.codes.ok:
             raise Exception(f"Request for {url} failed. Response code received:"
