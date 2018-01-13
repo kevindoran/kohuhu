@@ -28,7 +28,7 @@ def event_loop():
 async def gdax_exchange():
     """Sets up the real Gdax exchange"""
     creds = credentials.credentials_for('gdax', owner="tim")
-    gdax = GdaxExchange(api_credentials=creds)
+    gdax = GdaxExchange(api_credentials=creds, sandbox=True)
     run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
@@ -44,7 +44,7 @@ async def gdax_sandbox_exchange():
     """Sets up the sandbox Gdax exchange"""
     sandbox_url = 'wss://ws-feed-public.sandbox.gdax.com'
     creds = credentials.credentials_for('gdax_sandbox', owner="tim")
-    gdax = GdaxExchange(api_credentials=creds, websocket_url=sandbox_url)
+    gdax = GdaxExchange(api_credentials=creds, sandbox=True)
     run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
@@ -63,7 +63,8 @@ def test_gdax_callback_error_propagation():
 
     with pytest.raises(MockError):
         loop = asyncio.get_event_loop()
-        gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"))
+        gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"),
+                            sandbox=True)
         gdax.set_on_change_callback(raise_test_error)
         run_gdax_task = asyncio.ensure_future(gdax.run_task())
         loop.run_until_complete(run_gdax_task)

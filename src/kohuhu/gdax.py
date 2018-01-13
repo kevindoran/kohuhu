@@ -53,36 +53,34 @@ class GdaxExchange(ExchangeClient):
     standard_exchange_name = 'gdax'
     sandbox_exchange_name = 'gdax_sandbox'
 
-    default_websocket_url = 'wss://ws-feed.gdax.com'
-    rest_api_url = 'https://api.gdax.com'
+    standard_websocket_url = 'wss://ws-feed.gdax.com'
+    standard_rest_api_url = 'https://api.gdax.com'
 
-    def __init__(self,
-                 api_credentials,
-                 websocket_url=default_websocket_url):
-        """Creates a new Gdax Exchange
+    sandbox_websocket_url = 'wss//ws-feed-public.sandbox.gdax.com'
+    sandbox_rest_api_url = 'https://api-public.sandbox.gdax.com'
 
-        """
-        self.exchange_id = api_credentials.ccxt_id
-        if self.exchange_id not in [self.standard_exchange_name,
-                                    self.sandbox_exchange_name]:
-            raise InvalidOperationError("The credentials must be for either "
-                                        "gdax or gdax_sandbox "
-                                        f"(Not: api_credentials.ccxt_id).")
+    def __init__(self, api_credentials=None, sandbox=False):
+        """Creates a new Gdax Exchange."""
+        if sandbox:
+            self.exchange_id = self.sandbox_exchange_name
+            self._websocket_url = self.sandbox_websocket_url
+            self._rest_url = self.sandbox_rest_api_url
+        else:
+            self.exchange_id = self.standard_exchange_name
+            self._websocket_url = self.standard_websocket_url
+            self._rest_url = self.standard_rest_api_url
         super().__init__(self.exchange_id)
         self.exchange_state = ExchangeState(self.exchange_id, self)
         self.order_book_ready = asyncio.Event()
-
         self._channels = ['user', 'heartbeat',
                           'level2']  # user channel will only receive messages if authenticated
         self._symbol = 'BTC-USD'
-        self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
         self._background_task = None
         self._on_update_callback = lambda: None
         self._create_actions = []
         self._cancel_actions = {}
-
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
         self._coinbase_authenticator = None

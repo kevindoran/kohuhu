@@ -31,7 +31,8 @@ def empty_l2_update_response():
 
 @pytest.fixture
 async def gdax_exchange():
-    gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"))
+    gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"),
+                        sandbox=True)
     listen_websocket_task = asyncio.ensure_future(gdax._process_websocket_messages())
     yield gdax
 
@@ -90,7 +91,8 @@ def balance_response():
 def test_handle_balance(balance_response):
     credentials.load_credentials("api_credentials.json.example")
     gdax_client = GdaxExchange(
-        api_credentials=credentials.credentials_for("gdax_sandbox"))
+        api_credentials=credentials.credentials_for("gdax_sandbox"),
+        sandbox=True)
     assert gdax_client.exchange_state.balance().free("BTC") == Decimal(0)
     assert gdax_client.exchange_state.balance().on_hold("BTC") == Decimal(0)
     assert gdax_client.exchange_state.balance().free("USD") == Decimal(0)
