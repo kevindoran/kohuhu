@@ -15,6 +15,7 @@ import hmac
 from hashlib import sha384
 import kohuhu.credentials as credentials
 import requests
+from kohuhu.custom_exceptions import *
 
 from decimal import Decimal
 
@@ -653,8 +654,9 @@ class GeminiExchange(ExchangeClient):
     def execute_action(self, action):
         """Ren the given action on this exchange."""
         if action.exchange != self.exchange_id:
-            raise Exception(f"An action for exchange '{action.exchange}' was "
-                            "given to GeminiExchange.")
+            raise InvalidOperationError(f"An action for exchange "
+                                        f"'{action.exchange}' was given to "
+                                        f"GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
             self._create_actions.append(action)
             new_order_path = "/v1/order/new"
@@ -707,8 +709,6 @@ class GeminiExchange(ExchangeClient):
         Returns:
             (response): the response (from the requests package).
         """
-        if not parameters:
-            parameters = None
         url = self._rest_url_base + path
         success = False
         response = None
