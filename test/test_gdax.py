@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import json
+import datetime
 from kohuhu.gdax import GdaxExchange
 from test.common import wait_until
 from decimal import Decimal
@@ -43,26 +44,34 @@ async def gdax_exchange():
 async def test_handle_heartbeat(gdax_exchange, heartbeat_response, empty_l2_update_response):
     # -- Setup --
     gdax = gdax_exchange
+    heartbeat_time = datetime.datetime.strptime(heartbeat_response['time'],
+                                                    "%Y-%m-%dT%H:%M:%S.%fZ")
 
     # -- Action --
     gdax._handle_heartbeat(heartbeat_response)
 
     # -- Check --
-    assert gdax._last_sequence_number == heartbeat_response["sequence"]
+    assert gdax._last_heartbeat_time == heartbeat_time
+
+    # -- Setup --
+    # Add 1.1 second to heartbeat and check for no errors
+    heartbeat_time = heartbeat_time + datetime.timedelta(seconds=1.1)
+    heartbeat_response['time'] = heartbeat_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     # -- Action --
-    new_message_count = 15
-    for i in range(new_message_count):
-        await gdax._message_queue.put(json.dumps(empty_l2_update_response))
-
-    await wait_until(lambda: gdax._message_queue.qsize() == 0)
+    gdax._handle_heartbeat(heartbeat_response)
 
     # -- Check --
-    expected_err_msg = f"Heartbeat sequence number increase of {0} did not match " \
-                       f"internal count of websocket messages of {new_message_count}"
+    assert gdax._last_heartbeat_time == heartbeat_time
+
+    # --Setup --
+    # Add 2.1 second to heartbeat and check for error
+    heartbeat_time = heartbeat_time + datetime.timedelta(seconds=2.1)
+    heartbeat_response['time'] = heartbeat_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    # -- Action --
     with pytest.raises(Exception) as ex:
         gdax._handle_heartbeat(heartbeat_response)
-    assert str(ex.value) == expected_err_msg
 
 
 @pytest.fixture
