@@ -415,7 +415,7 @@ class GdaxExchange(ExchangeClient):
 
     def update_balance(self):
         accounts_path = "/accounts"
-        response = self._send_http_request(accounts_path)
+        response = self._send_http_request(accounts_path, method='get')
         self._update_balance_from_response(response.json())
 
     def _update_balance_from_response(self, json_data):
