@@ -358,7 +358,8 @@ class GeminiExchange(ExchangeClient):
         #      setup on the first received message is not premature, even if it
         #      is just a heartbeat.
         await self._market_data_sock_info.ready.wait()
-        await self._orders_sock_info.ready.wait()
+        if self._authenticate:
+            await self._orders_sock_info.ready.wait()
 
     def is_setup(self):
         """Returns whether the exchange client is fully initialized.
