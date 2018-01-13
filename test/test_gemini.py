@@ -570,7 +570,7 @@ def cancel_rejected_response():
 
     order = exchanges.Order()
     order.order_id = order_id
-    order.side = exchanges.Order.BID
+    order.side = exchanges.Side.BID
     order.type = exchanges.Order.Type.LIMIT
     order.price = Decimal(price)
     order.amount = Decimal(amount)

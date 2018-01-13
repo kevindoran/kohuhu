@@ -73,7 +73,6 @@ async def test_market_buy(live_sandbox_exchange):
     """Executes a market bid and checks that the order is registered."""
     gemini = live_sandbox_exchange
     await gemini.setup_event()
-    #await asyncio.sleep(5)
     exchange_state = gemini.exchange_state
 
     bid_amount = Decimal("0.00001")
@@ -82,6 +81,27 @@ async def test_market_buy(live_sandbox_exchange):
                                        exchanges.Order.Type.MARKET,
                                        amount=bid_amount)
     gemini.execute_action(bid_action)
+    success = await wait_until(lambda: len(exchange_state._orders))
+    assert success
+
+@pytest.mark.asyncio
+async def test_limit_sell(live_sandbox_exchange):
+    gemini = live_sandbox_exchange
+    await gemini.setup_event()
+    exchange_state = gemini.exchange_state
+    success = await wait_until(lambda: len(exchange_state.order_book().asks()))
+    assert success
+    # Get the top market bid.
+    quote = exchange_state.order_book().bids()[0]
+    top_bid_amount = quote.quantity
+    top_bid_price = quote.price
+    amount = min(Decimal("0.00001"), top_bid_amount)
+    ask_action = exchanges.CreateOrder("gemini_sandbox",
+                                       exchanges.Side.ASK,
+                                       exchanges.Order.Type.LIMIT,
+                                       amount=amount,
+                                       price=top_bid_price)
+    gemini.execute_action(ask_action)
     success = await wait_until(lambda: len(exchange_state._orders))
     assert success
 
