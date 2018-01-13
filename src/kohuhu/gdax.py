@@ -83,7 +83,7 @@ class GdaxExchange(ExchangeClient):
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
         self._coinbase_authenticator = None
-        if api_credentials:
+        if self._authenticate:
             self._coinbase_authenticator = CoinbaseExchangeAuth(
                 api_credentials.api_key, api_credentials.api_secret,
                 api_credentials.passphrase)
@@ -410,10 +410,15 @@ class GdaxExchange(ExchangeClient):
                                     auth=self._coinbase_authenticator)
         if response.status_code != requests.codes.ok:
             raise Exception(f"Request for {url} failed. Response code received:"
-                            f" {response.status_code}.")
+                            f" {response.status_code}. Content: {response.content}")
         return response
 
     def update_balance(self):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
+
         accounts_path = "/accounts"
         response = self._send_http_request(accounts_path, method='get')
         self._update_balance_from_response(response.json())
@@ -438,6 +443,11 @@ class GdaxExchange(ExchangeClient):
             self.exchange_state.balance().set_on_hold(currency, holds)
 
     def execute_action(self, action):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
+
         if action.exchange != self.exchange_id:
             raise InvalidOperationError(f"An action for exchange "
                                         f"'{action.exchange}' was given to "

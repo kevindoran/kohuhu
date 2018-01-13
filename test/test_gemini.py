@@ -12,8 +12,13 @@ gemini_example_api_key = "abcdefghi"
 def real_credentials():
     """A bit of a hacky fixture that switches to real credentials then back."""
     credentials.load_credentials("api_credentials.json")
-    yield None
+    yield credentials.credentials_for('gemini_sandbox', owner='kevin')
     credentials.load_credentials("api_credentials.json.example")
+
+
+@pytest.fixture
+def test_credentials():
+    return credentials.credentials_for('gemini_sandbox', owner='kevin')
 
 
 def test_encode_and_sign(real_credentials):
@@ -35,7 +40,7 @@ def test_encode_and_sign(real_credentials):
     # Without b prefix, Python 3 strings default to UTF-8 encoding.
     expected_signature = "6713960635c1996274fc35642084bdedc74a6a483bf35b0c3c2f8c331f1ee427711ae30b61cfc2be856c65a0c849ec52"
     expected_payload = b"eyJyZXF1ZXN0IjogIi92MS9iYWxhbmNlcyIsICJub25jZSI6IDE1MTUxMjM3NDU4NjN9"
-    gemini = GeminiExchange(sandbox=True)
+    gemini = GeminiExchange(api_credentials=real_credentials, sandbox=True)
 
     # Action
     b64, signature = gemini._encode_and_sign(payload)
@@ -103,8 +108,8 @@ def subscription_ack_response():
     return test_response
 
 
-def test_process_subscription_ack(subscription_ack_response):
-    exchange = GeminiExchange()
+def test_process_subscription_ack(subscription_ack_response, test_credentials):
+    exchange = GeminiExchange(api_credentials=test_credentials)
 
     # No exceptions should be thrown.
     exchange._handle_orders(subscription_ack_response)

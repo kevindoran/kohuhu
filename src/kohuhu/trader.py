@@ -176,6 +176,7 @@ if __name__ == "__main__":
     from kohuhu.gemini import GeminiExchange
     import kohuhu.credentials as credentials
     credentials.load_credentials()
+    creds = credentials.credentials_for('gemini_sandbox', owner='kevin')
     # Start the trader without any algorithm set.
-    trader = Trader(algorithm=None, exchanges=[GeminiExchange(sandbox=True)])
+    trader = Trader(algorithm=None, exchanges=[GeminiExchange(api_credentials=creds, sandbox=True)])
     trader.start()

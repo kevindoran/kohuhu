@@ -11,11 +11,16 @@ import test.common
 
 credentials.load_credentials()
 
+# Disable websockets debug logging for more comprehensible logs when using -s
+logger = logging.getLogger('websockets')
+logger.setLevel(logging.ERROR)
+
 # test.common.enableProxy()
 
 @pytest.fixture
 def sandbox_exchange():
-    gemini = GeminiExchange(sandbox=True)
+    creds = credentials.credentials_for('gemini_sandbox', owner='kevin')
+    gemini = GeminiExchange(api_credentials=creds, sandbox=True)
     return gemini
 
 
@@ -43,7 +48,8 @@ def test_get_balance(sandbox_exchange):
 
 @pytest.fixture
 async def live_sandbox_exchange(event_loop):
-    gemini = GeminiExchange(sandbox=True)
+    creds = credentials.credentials_for('gemini_sandbox', owner='kevin')
+    gemini = GeminiExchange(api_credentials=creds, sandbox=True)
     run_task = gemini.run_task()
     asyncio.ensure_future(run_task, loop=event_loop)
     yield gemini
@@ -55,11 +61,8 @@ async def live_sandbox_exchange(event_loop):
     await asyncio.sleep(1)
     try:
         run_task.result()
-    except asyncio.CancelledError as ex:
-        logging.exception(ex)
-    # I'm not sure if we need to call one or both of these.
-    #event_loop.stop()
-    #event_loop.close()
+    except asyncio.CancelledError:
+        pass  # We expect a cancelled error
 
 
 @pytest.mark.asyncio
