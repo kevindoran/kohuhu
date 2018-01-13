@@ -50,16 +50,24 @@ class GdaxExchange(ExchangeClient):
            order_book_ready (bool):  Indicates that this exchange is both
                connected and has fully populated the orderbook.
     """
-    exchange_id = 'gdax'
+    standard_exchange_name = 'gdax'
+    sandbox_exchange_name = 'gdax_sandbox'
+
     default_websocket_url = 'wss://ws-feed.gdax.com'
     rest_api_url = 'https://api.gdax.com'
 
     def __init__(self,
-                 api_credentials=None,
+                 api_credentials,
                  websocket_url=default_websocket_url):
         """Creates a new Gdax Exchange
 
         """
+        self.exchange_id = api_credentials.ccxt_id
+        if self.exchange_id not in [self.standard_exchange_name,
+                                    self.sandbox_exchange_name]:
+            raise InvalidOperationError("The credentials must be for either "
+                                        "gdax or gdax_sandbox "
+                                        f"(Not: api_credentials.ccxt_id).")
         super().__init__(self.exchange_id)
         self.exchange_state = ExchangeState(self.exchange_id, self)
         self.order_book_ready = asyncio.Event()
@@ -77,9 +85,11 @@ class GdaxExchange(ExchangeClient):
 
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
-        self._coinbase_authenticator = CoinbaseExchangeAuth(
-            api_credentials.api_key, api_credentials.api_secret,
-            api_credentials.passphrase)
+        self._coinbase_authenticator = None
+        if api_credentials:
+            self._coinbase_authenticator = CoinbaseExchangeAuth(
+                api_credentials.api_key, api_credentials.api_secret,
+                api_credentials.passphrase)
 
         self._exchange_latency_limit = 10  # Seconds we are willing to be behind the exchange (+ the interval below)
         self._exchange_latency_check_interval = 5  # How often we check if we've gone beyond this limit

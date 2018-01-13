@@ -7,6 +7,8 @@ from decimal import Decimal
 import decimal
 import kohuhu.credentials as credentials
 
+credentials.load_credentials()
+
 
 @pytest.fixture()
 def heartbeat_response():
@@ -29,7 +31,7 @@ def empty_l2_update_response():
 
 @pytest.fixture
 async def gdax_exchange():
-    gdax = GdaxExchange()
+    gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"))
     listen_websocket_task = asyncio.ensure_future(gdax._process_websocket_messages())
     yield gdax
 
@@ -102,3 +104,6 @@ def test_handle_balance(balance_response):
            Decimal("79.226634806693")
     assert gdax_client.exchange_state.balance().on_hold("USD") == \
            Decimal("1.0035025")
+
+
+

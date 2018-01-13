@@ -1,9 +1,12 @@
 import pytest
 from kohuhu.gdax import GdaxExchange
 from kohuhu import credentials
+import kohuhu.exchanges as exchanges
+from decimal import Decimal
 import asyncio
 from kohuhu.custom_exceptions import MockError
 import logging
+from test.common import wait_until
 
 # Disable websockets debug logging for more comprehensible logs when using -s
 logger = logging.getLogger('websockets')
@@ -60,7 +63,7 @@ def test_gdax_callback_error_propagation():
 
     with pytest.raises(MockError):
         loop = asyncio.get_event_loop()
-        gdax = GdaxExchange()
+        gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"))
         gdax.set_on_change_callback(raise_test_error)
         run_gdax_task = asyncio.ensure_future(gdax.run_task())
         loop.run_until_complete(run_gdax_task)
@@ -107,3 +110,22 @@ def test_valid_orderbook(gdax_exchange):
         f"best_bid had quantity {best_bid.quantity} which is > than expected {max_expected_quote_quantity}"
     assert best_ask.quantity < max_expected_quote_quantity, \
         f"best_ask had quantity {best_ask.quantity} which is > than expected {max_expected_quote_quantity}"
+
+
+
+@pytest.mark.asyncio
+async def test_execute_action(gdax_sandbox_exchange):
+    gdax = gdax_sandbox_exchange
+    lowest_ask_quote = gdax.exchange_state.order_book().asks()[0]
+    max_amount = Decimal("0.000001")
+    bid_amount = min(lowest_ask_quote.quantity, max_amount)
+    bid_limit_action = exchanges.CreateOrder("gdax_sandbox",
+                                             exchanges.Side.BID,
+                                             exchanges.Order.Type.LIMIT,
+                                             bid_amount,
+                                             price=lowest_ask_quote.price)
+    order_count = len(gdax.exchange_state._orders)
+    assert order_count == 0
+    gdax.execute_action(bid_limit_action)
+    success = await wait_until(lambda: len(gdax.exchange_state._orders))
+    assert success
