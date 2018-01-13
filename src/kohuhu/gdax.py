@@ -3,6 +3,7 @@ import json
 import websockets
 from decimal import Decimal
 import logging
+import kohuhu.exchanges as exchanges
 from kohuhu.exchanges import ExchangeState
 import time
 import base64
@@ -25,7 +26,8 @@ class CoinbaseExchangeAuth(AuthBase):
 
     def __call__(self, request):
         timestamp = str(time.time())
-        message = timestamp + request.method + request.path_url + (request.body or '')
+        message = timestamp + request.method + request.path_url + (
+                request.body or '')
         hmac_key = base64.b64decode(self.secret_key)
         signature = hmac.new(hmac_key, message, hashlib.sha256)
         signature_b64 = signature.digest().encode('base64').rstrip('\n')
@@ -62,13 +64,16 @@ class GdaxExchange(ExchangeClient):
         self.exchange_state = ExchangeState(self.exchange_id, self)
         self.order_book_ready = asyncio.Event()
 
-        self._channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
+        self._channels = ['user', 'heartbeat',
+                          'level2']  # user channel will only receive messages if authenticated
         self._symbol = 'BTC-USD'
         self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
         self._background_task = None
         self._on_update_callback = lambda: None
+        self._create_actions = []
+        self._cancel_actions = {}
 
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
@@ -128,7 +133,8 @@ class GdaxExchange(ExchangeClient):
             # Then listen for messages, this will run forever.
             await self._listen_websocket_feed()
 
-        return asyncio.gather(listen_websocket(), process_messages_coro, watchdog_coro)
+        return asyncio.gather(listen_websocket(), process_messages_coro,
+                              watchdog_coro)
 
     async def stop(self):
         """Stop all background tasks and close the websocket"""
@@ -159,9 +165,10 @@ class GdaxExchange(ExchangeClient):
         Gdax uses a single websocket to feed all information.
         """
         if self._websocket is None:
-            raise InvalidOperationError("Websocket is not connected. You must call "
-                                        "connect_websocket() before listening on the "
-                                        "websocket channel.")
+            raise InvalidOperationError(
+                "Websocket is not connected. You must call "
+                "connect_websocket() before listening on the "
+                "websocket channel.")
         try:
             # This blocks waiting for a new websocket message
             async for message in self._websocket:
@@ -272,7 +279,8 @@ class GdaxExchange(ExchangeClient):
         what you have subscribed to.
 
         """
-        heartbeat_time = datetime.datetime.strptime(heartbeat['time'], "%Y-%m-%dT%H:%M:%S.%fZ")
+        heartbeat_time = datetime.datetime.strptime(heartbeat['time'],
+                                                    "%Y-%m-%dT%H:%M:%S.%fZ")
         log.debug(f"Received heartbeat with time: {heartbeat_time}")
 
         # This is the first heartbeat, just set our last time value and return.
@@ -282,7 +290,8 @@ class GdaxExchange(ExchangeClient):
 
         # Check that this heartbeat is within 0.5 - 1.5s of the last.
         delta = heartbeat_time - self._last_heartbeat_time
-        if delta < datetime.timedelta(seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
+        if delta < datetime.timedelta(
+                seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
             error_message = f"Heartbeat time value <0.5s or > 1.5s from last heartbeat time value. " \
                             f"Last value: {self._last_heartbeat_time}, current value: {heartbeat_time}"
             log.error(error_message)
@@ -379,16 +388,18 @@ class GdaxExchange(ExchangeClient):
                 continue
             utc_now = datetime.datetime.utcnow()
             time_since_last_heartbeat = utc_now - self._last_heartbeat_time
-            if time_since_last_heartbeat > datetime.timedelta(seconds=self._exchange_latency_limit):
+            if time_since_last_heartbeat > datetime.timedelta(
+                    seconds=self._exchange_latency_limit):
                 error_message = f"No heartbeat message processed in the last {time_since_last_heartbeat} " \
                                 f"seconds. Time now:{utc_now}, last heartbeat: {self._last_heartbeat_time}"
                 log.error(error_message)
                 raise Exception(error_message)
 
-    def _post_http_request(self, path, json_body=None):
+    def _send_http_request(self, path, json_body=None, method='post'):
         url = self.rest_api_url + path
-        response = requests.post(url, json=json_body,
-                          auth=self._coinbase_authenticator)
+        function_to_call = getattr(requests, method)
+        response = function_to_call(url, json=json_body,
+                                    auth=self._coinbase_authenticator)
         if response.status_code != requests.codes.ok:
             raise Exception(f"Request for {url} failed. Response code received:"
                             f" {response.status_code}.")
@@ -396,7 +407,7 @@ class GdaxExchange(ExchangeClient):
 
     def update_balance(self):
         accounts_path = "/accounts"
-        response = self._post_http_request(accounts_path)
+        response = self._send_http_request(accounts_path)
         self._update_balance_from_response(response.json())
 
     def _update_balance_from_response(self, json_data):
@@ -417,3 +428,58 @@ class GdaxExchange(ExchangeClient):
             # default_amount = account['default_amount']
             self.exchange_state.balance().set_free(currency, available)
             self.exchange_state.balance().set_on_hold(currency, holds)
+
+    def execute_action(self, action):
+        if action.exchange != self.exchange_id:
+            raise InvalidOperationError(f"An action for exchange "
+                                        f"'{action.exchange}' was given to "
+                                        f"GDAX.")
+        if type(action) == exchanges.CreateOrder:
+            self._create_actions.append(action)
+            orders_path = "/orders"
+            params = self._new_order_parameters(action)
+            self._send_http_request(orders_path, params)
+        if type(action) == exchanges.CancelOrder:
+            self._cancel_actions[action.order_id] = action
+            cancel_order_path = "/orders/" + action.order_id
+            self._send_http_request(cancel_order_path, method='delete')
+
+    def _new_order_parameters(self, create_order_action):
+        """Generates the API parameters to execute the given create action."""
+        parameters = {}
+        parameters['client_oid'] = str(id(create_order_action))
+        parameters['side'] = 'buy' if create_order_action.side == \
+                                      exchanges.Side.BID else 'sell'
+        parameters['product_id'] = "BTC-USD"
+        # Self-trade prevention flag. In the event that our trade would be
+        # matched with another trade of ours:
+        #     dc: decrease and cancel (default).
+        #     co: cancel oldest.
+        #     cn: cancel newest.
+        #     cb: cancel both.
+        # Unused:
+        # parameters['stp'] = None  # The default seems fine. We shouldn't
+        # ever encounter this.
+        if create_order_action.type == exchanges.Order.Type.LIMIT:
+            parameters['type'] = 'limit'
+            parameters['price'] = create_order_action.price
+            parameters['size'] = create_order_action.amount
+            # Time in force:
+            #   GTC: good till cancelled.
+            #   GTT: good till time.
+            #   IOC: immediate or cancel.
+            #   FOK: fill or kill. Same as IOC except the whole order must
+            #        me filled instead of just cancelling the remaining, as with
+            #        IOC.
+            parameters['time_in_force'] = 'GTC'
+            # Unused:
+            # parameters['cancel_after']
+            # parameters['post_only']
+        else:
+            # TODO: we should probably be using a limit order with a
+            # 'immediate or cancel' flag.
+            parameters['type'] = 'market'
+            parameters['size'] = create_order_action.amount
+            # Unused:
+            # parameters['funds']
+        return parameters
