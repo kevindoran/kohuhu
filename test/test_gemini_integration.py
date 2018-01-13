@@ -7,17 +7,11 @@ import os
 import kohuhu.credentials as credentials
 from decimal import Decimal
 import logging
+import test.common
 
 credentials.load_credentials()
 
-use_proxy = False
-if use_proxy:
-    os.environ["HTTP_PROXY"] = "http://127.0.0.1:8080"
-    os.environ["HTTPS_PROXY"] = "https://127.0.0.1:8080"
-    # For use with BurpSuite.
-    # Taken from here: https://www.th3r3p0.com/random/python-requests-and-burp-suite.html
-    os.environ["REQUESTS_CA_BUNDLE"] = "/home/k/.ssh/burpsuite_cert.pem"
-
+# test.common.enableProxy()
 
 @pytest.fixture
 def sandbox_exchange():

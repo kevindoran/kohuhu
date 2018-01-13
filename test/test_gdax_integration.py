@@ -7,6 +7,7 @@ import asyncio
 from kohuhu.custom_exceptions import MockError
 import logging
 from test.common import wait_until
+import test.common
 
 # Disable websockets debug logging for more comprehensible logs when using -s
 logger = logging.getLogger('websockets')
@@ -14,6 +15,8 @@ logger.setLevel(logging.ERROR)
 
 credentials.load_credentials('api_credentials.json')
 
+
+# test.common.enableProxy()
 
 @pytest.yield_fixture(scope='module')  # This scope needs to be >= any async fixtures.
 def event_loop():

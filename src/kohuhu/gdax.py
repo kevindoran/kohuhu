@@ -29,9 +29,8 @@ class CoinbaseExchangeAuth(AuthBase):
         message = timestamp + request.method + request.path_url + (
                 request.body or '')
         hmac_key = base64.b64decode(self.secret_key)
-        signature = hmac.new(hmac_key, message, hashlib.sha256)
-        signature_b64 = signature.digest().encode('base64').rstrip('\n')
-
+        signature = hmac.new(hmac_key, message.encode("ascii"), hashlib.sha256)
+        signature_b64 = base64.b64encode(signature.digest()).decode('utf-8')
         request.headers.update({
             'CB-ACCESS-SIGN': signature_b64,
             'CB-ACCESS-TIMESTAMP': timestamp,
@@ -56,7 +55,7 @@ class GdaxExchange(ExchangeClient):
     standard_websocket_url = 'wss://ws-feed.gdax.com'
     standard_rest_api_url = 'https://api.gdax.com'
 
-    sandbox_websocket_url = 'wss//ws-feed-public.sandbox.gdax.com'
+    sandbox_websocket_url = 'wss://ws-feed-public.sandbox.gdax.com'
     sandbox_rest_api_url = 'https://api-public.sandbox.gdax.com'
 
     def __init__(self, api_credentials=None, sandbox=False):
@@ -404,9 +403,9 @@ class GdaxExchange(ExchangeClient):
                 raise Exception(error_message)
 
     def _send_http_request(self, path, json_body=None, method='post'):
-        url = self.rest_api_url + path
+        url = self._rest_url + path
         function_to_call = getattr(requests, method)
-        response = function_to_call(url, json=json_body,
+        response = function_to_call(url, data=json.dumps(json_body),#json=json_body,
                                     auth=self._coinbase_authenticator)
         if response.status_code != requests.codes.ok:
             raise Exception(f"Request for {url} failed. Response code received:"
@@ -447,7 +446,7 @@ class GdaxExchange(ExchangeClient):
             orders_path = "/orders"
             params = self._new_order_parameters(action)
             self._send_http_request(orders_path, params)
-        if type(action) == exchanges.CancelOrder:
+        elif type(action) == exchanges.CancelOrder:
             self._cancel_actions[action.order_id] = action
             cancel_order_path = "/orders/" + action.order_id
             self._send_http_request(cancel_order_path, method='delete')
@@ -470,8 +469,8 @@ class GdaxExchange(ExchangeClient):
         # ever encounter this.
         if create_order_action.type == exchanges.Order.Type.LIMIT:
             parameters['type'] = 'limit'
-            parameters['price'] = create_order_action.price
-            parameters['size'] = create_order_action.amount
+            parameters['price'] = str(create_order_action.price)
+            parameters['size'] = str(create_order_action.amount)
             # Time in force:
             #   GTC: good till cancelled.
             #   GTT: good till time.
@@ -487,7 +486,7 @@ class GdaxExchange(ExchangeClient):
             # TODO: we should probably be using a limit order with a
             # 'immediate or cancel' flag.
             parameters['type'] = 'market'
-            parameters['size'] = create_order_action.amount
+            parameters['size'] = str(create_order_action.amount)
             # Unused:
             # parameters['funds']
         return parameters
