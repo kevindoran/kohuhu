@@ -404,12 +404,12 @@ class GdaxExchange(ExchangeClient):
         for account in json_data:
             currency = account['currency']
             # Balance: total funds in the account.
-            balance = account['balance']
+            balance = Decimal(account['balance'])
             # Holds: funds on hold (not available for use).
             # Note: the Gdax example uses "hold" as the key, but the description
             # states "holds" as the key.
-            holds = account['hold']
-            available = account['available']
+            holds = Decimal(account['hold'])
+            available = Decimal(account['available'])
             # Unused
             # id = account['id']
             # margin_enabled = account['margin_enabled']

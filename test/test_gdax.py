@@ -97,8 +97,8 @@ def test_handle_balance(balance_response):
     assert gdax_client.exchange_state.balance().free("BTC") == \
            Decimal("0.5001")
     assert gdax_client.exchange_state.balance().on_hold("BTC") == \
-           Decimal("0.50699")
+           Decimal("0.050699")
     assert gdax_client.exchange_state.balance().free("USD") == \
            Decimal("79.226634806693")
-    assert gdax_client.exchange_state.balance()._on_hold("USD") == \
+    assert gdax_client.exchange_state.balance().on_hold("USD") == \
            Decimal("1.0035025")
