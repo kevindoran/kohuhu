@@ -14,6 +14,7 @@ import asyncio
 import datetime
 import requests
 from requests.auth import AuthBase
+import uuid
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class GdaxExchange(ExchangeClient):
         self._background_task = None
         self._on_update_callback = lambda: None
         self._create_actions = []
+        self._uuid_to_action = {}
         self._cancel_actions = {}
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
@@ -465,7 +467,12 @@ class GdaxExchange(ExchangeClient):
     def _new_order_parameters(self, create_order_action):
         """Generates the API parameters to execute the given create action."""
         parameters = {}
-        parameters['client_oid'] = str(id(create_order_action))
+        # Inspired from SO, Gdax has unspecified strict requirements on the form
+        # of the client order id.
+        # https://stackoverflow.com/questions/47763321/gdax-api-request-returning-error-400-badrequest
+        client_id = str(uuid.uuid4())
+        self._uuid_to_action[client_id] = create_order_action
+        parameters['client_oid'] = client_id
         parameters['side'] = 'buy' if create_order_action.side == \
                                       exchanges.Side.BID else 'sell'
         parameters['product_id'] = "BTC-USD"
