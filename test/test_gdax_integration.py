@@ -42,8 +42,7 @@ async def gdax_exchange():
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_sandbox_exchange():
     """Sets up the sandbox Gdax exchange"""
-    sandbox_url = 'wss://ws-feed-public.sandbox.gdax.com'
-    creds = credentials.credentials_for('gdax_sandbox', owner="tim")
+    creds = credentials.credentials_for('gdax_sandbox', owner="kevin")
     gdax = GdaxExchange(api_credentials=creds, sandbox=True)
     run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
