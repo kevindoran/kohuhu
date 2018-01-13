@@ -161,6 +161,7 @@ class ExchangeState:
         # ccxt structure.
         self.exchange_id = exchange_id
         self._order_book = OrderBook()
+        # Maybe this should be public
         self._orders = {}
         self._balance = Balance()
         self.exchange_client = exchange_client

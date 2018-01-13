@@ -29,9 +29,8 @@ class CoinbaseExchangeAuth(AuthBase):
         message = timestamp + request.method + request.path_url + (
                 request.body or '')
         hmac_key = base64.b64decode(self.secret_key)
-        signature = hmac.new(hmac_key, message, hashlib.sha256)
-        signature_b64 = signature.digest().encode('base64').rstrip('\n')
-
+        signature = hmac.new(hmac_key, message.encode("ascii"), hashlib.sha256)
+        signature_b64 = base64.b64encode(signature.digest()).decode('utf-8')
         request.headers.update({
             'CB-ACCESS-SIGN': signature_b64,
             'CB-ACCESS-TIMESTAMP': timestamp,
@@ -50,36 +49,44 @@ class GdaxExchange(ExchangeClient):
            order_book_ready (bool):  Indicates that this exchange is both
                connected and has fully populated the orderbook.
     """
-    exchange_id = 'gdax'
-    default_websocket_url = 'wss://ws-feed.gdax.com'
-    rest_api_url = 'https://api.gdax.com'
+    standard_exchange_name = 'gdax'
+    sandbox_exchange_name = 'gdax_sandbox'
 
-    def __init__(self,
-                 api_credentials=None,
-                 websocket_url=default_websocket_url):
-        """Creates a new Gdax Exchange
+    standard_websocket_url = 'wss://ws-feed.gdax.com'
+    standard_rest_api_url = 'https://api.gdax.com'
 
-        """
+    sandbox_websocket_url = 'wss://ws-feed-public.sandbox.gdax.com'
+    sandbox_rest_api_url = 'https://api-public.sandbox.gdax.com'
+
+    def __init__(self, api_credentials=None, sandbox=False):
+        """Creates a new Gdax Exchange."""
+        if sandbox:
+            self.exchange_id = self.sandbox_exchange_name
+            self._websocket_url = self.sandbox_websocket_url
+            self._rest_url = self.sandbox_rest_api_url
+        else:
+            self.exchange_id = self.standard_exchange_name
+            self._websocket_url = self.standard_websocket_url
+            self._rest_url = self.standard_rest_api_url
         super().__init__(self.exchange_id)
         self.exchange_state = ExchangeState(self.exchange_id, self)
         self.order_book_ready = asyncio.Event()
-
         self._channels = ['user', 'heartbeat',
                           'level2']  # user channel will only receive messages if authenticated
         self._symbol = 'BTC-USD'
-        self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
         self._background_task = None
         self._on_update_callback = lambda: None
         self._create_actions = []
         self._cancel_actions = {}
-
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
-        self._coinbase_authenticator = CoinbaseExchangeAuth(
-            api_credentials.api_key, api_credentials.api_secret,
-            api_credentials.passphrase)
+        self._coinbase_authenticator = None
+        if api_credentials:
+            self._coinbase_authenticator = CoinbaseExchangeAuth(
+                api_credentials.api_key, api_credentials.api_secret,
+                api_credentials.passphrase)
 
         self._exchange_latency_limit = 10  # Seconds we are willing to be behind the exchange (+ the interval below)
         self._exchange_latency_check_interval = 5  # How often we check if we've gone beyond this limit
@@ -396,9 +403,10 @@ class GdaxExchange(ExchangeClient):
                 raise Exception(error_message)
 
     def _send_http_request(self, path, json_body=None, method='post'):
-        url = self.rest_api_url + path
+        url = self._rest_url + path
         function_to_call = getattr(requests, method)
-        response = function_to_call(url, json=json_body,
+        data = json.dumps(json_body) if json_body else None
+        response = function_to_call(url, data=data,
                                     auth=self._coinbase_authenticator)
         if response.status_code != requests.codes.ok:
             raise Exception(f"Request for {url} failed. Response code received:"
@@ -407,7 +415,7 @@ class GdaxExchange(ExchangeClient):
 
     def update_balance(self):
         accounts_path = "/accounts"
-        response = self._send_http_request(accounts_path)
+        response = self._send_http_request(accounts_path, method='get')
         self._update_balance_from_response(response.json())
 
     def _update_balance_from_response(self, json_data):
@@ -439,7 +447,7 @@ class GdaxExchange(ExchangeClient):
             orders_path = "/orders"
             params = self._new_order_parameters(action)
             self._send_http_request(orders_path, params)
-        if type(action) == exchanges.CancelOrder:
+        elif type(action) == exchanges.CancelOrder:
             self._cancel_actions[action.order_id] = action
             cancel_order_path = "/orders/" + action.order_id
             self._send_http_request(cancel_order_path, method='delete')
@@ -462,8 +470,8 @@ class GdaxExchange(ExchangeClient):
         # ever encounter this.
         if create_order_action.type == exchanges.Order.Type.LIMIT:
             parameters['type'] = 'limit'
-            parameters['price'] = create_order_action.price
-            parameters['size'] = create_order_action.amount
+            parameters['price'] = str(create_order_action.price)
+            parameters['size'] = str(create_order_action.amount)
             # Time in force:
             #   GTC: good till cancelled.
             #   GTT: good till time.
@@ -479,7 +487,7 @@ class GdaxExchange(ExchangeClient):
             # TODO: we should probably be using a limit order with a
             # 'immediate or cancel' flag.
             parameters['type'] = 'market'
-            parameters['size'] = create_order_action.amount
+            parameters['size'] = str(create_order_action.amount)
             # Unused:
             # parameters['funds']
         return parameters
