@@ -707,8 +707,6 @@ class GeminiExchange(ExchangeClient):
         Returns:
             (response): the response (from the requests package).
         """
-        if not parameters:
-            parameters = None
         url = self._rest_url_base + path
         success = False
         response = None
