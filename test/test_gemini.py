@@ -215,6 +215,7 @@ def test_process_accepted_limit_bid(accepted_limit_bid_response):
     assert order.type == exchanges.Order.Type.LIMIT
     assert order.amount == Decimal(response['original_amount'])
     assert order.price == Decimal(response['price'])
+    assert order.filled == Decimal(0)
     assert order.average_price == Decimal(response['avg_execution_price'])
     assert action.status == exchanges.Action.Status.SUCCESS
     assert action.order == order

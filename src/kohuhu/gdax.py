@@ -78,7 +78,6 @@ class GdaxExchange(ExchangeClient):
         self._websocket = None
         self._message_queue = asyncio.Queue()
         self._background_task = None
-        self._on_update_callback = lambda: None
         self._create_actions_by_uuid = {}
         self._cancel_actions = {}
         self._api_credentials = api_credentials
@@ -94,11 +93,6 @@ class GdaxExchange(ExchangeClient):
         self._last_heartbeat_time = None
 
         self._running = False
-
-    def set_on_change_callback(self, callback):
-        """Sets the callback that is invoked when the state of the exchange
-        changes. For example, the order book is updated, or an order is filled."""
-        self._on_update_callback = callback
 
     @staticmethod
     def datetime_from_string(timestamp_str):
@@ -230,20 +224,21 @@ class GdaxExchange(ExchangeClient):
         return auth_params
 
     async def _process_websocket_messages(self):
-        """Processes messages added to the message queue by the websocket task. This calls
-        the _handle_message() method for each message then calls the _on_update_callback().
-        If multiple messages are received at once (or in a short interval), _on_update_callback
-        will only be called once"""
+        """Process messages added to the message queue by the websocket task.
+
+        This calls the _handle_message() method for each message then updates
+        subscribers. If multiple messages are received at once (or in a short
+        interval), subscribers will only be notified once."""
         while True:
             message = await self._message_queue.get()
             self._handle_message(message)
             if not self._message_queue.empty():
                 # If we've already got another update, then update our
-                # orderbook before we call the callback.
+                # orderbook before we call notify subscribers.
                 continue
 
             # Call the callback, our orderbook is now up to date.
-            self._on_update_callback()
+            self.exchange_state.update_publisher.notify()
 
     def _handle_message(self, msg):
         """The main handler for all websocket messages. This method will call
@@ -327,8 +322,8 @@ class GdaxExchange(ExchangeClient):
             else exchanges.Side.ASK
         # Price is not present for activate responses (when using stop orders).
         # If stop orders are used, price needs to be within each of the if
-        # blocks.
-        price = Decimal(order_dict['price'])
+        # blocks. Price is also not present for market orders.
+        price = Decimal(order_dict.get('price', 0))
         # Unused
         # time = self.datetime_from_string(order_dict['time'])
         if type == 'received':
@@ -342,6 +337,7 @@ class GdaxExchange(ExchangeClient):
             new_order.price = price
             new_order.amount = size
             new_order.remaining = size
+            new_order.filled = Decimal(0)
             new_order.type = order_type
             new_order.side = side
             new_order.symbol = product_id

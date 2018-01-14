@@ -1,6 +1,7 @@
 from enum import Enum, auto
 import time
 from datetime import datetime
+from datetime import timedelta
 import asyncio
 import logging
 from kohuhu.exchanges import State
@@ -44,7 +45,7 @@ class Timer:
                 count += 1
                 target_time = init_time + count*period
                 diff = target_time - datetime.now()
-                yield max(diff, 0)
+                yield max(diff, timedelta(seconds=0))
         ticker = tick()
         for delta in tick():
             await asyncio.sleep(delta.seconds)
@@ -73,9 +74,7 @@ class Trader:
     # Then edit the state here.
     # Then check if actions were correct. They should be in the actions queue.
     """
-    def __init__(self, algorithm=None, exchanges=None):
-        if not exchanges:
-            exchanges = []
+    def __init__(self, algorithm, exchanges):
         self.state = State()
         self.exchanges = exchanges
         self.action_queue = asyncio.Queue()
@@ -84,20 +83,22 @@ class Trader:
         self._loop = None
         self._tasks = []
 
-    def initialize(self):
-        """Calls initialize on the algorithm."""
-        if self._algorithm:
-            self._algorithm.initialize(self.state, self._timer,
-                                       self._add_action)
-
     def _add_action(self, action):
         """Adds an action to the action queue."""
+        print(f"Adding action to the queue: {action}.")
         self.action_queue.put_nowait(action)
 
-    def log_updates(self):
-        print("Update received.")
+    def log_updates(self, id, description):
+        print(f"Update received from {id}. Description: {description}.")
         # TODO: How to print with logging?
         #log.info("Update received.")
+
+    def log_status(self, time):
+        if self._algorithm:
+            print("Trader status update:")
+            print(self._algorithm.status_str() + "\n")
+        else:
+            print("No algorithm loaded.")
 
     async def _process_actions(self):
         """Call exchange_client.execute() for each action created by the algo.
@@ -106,8 +107,8 @@ class Trader:
             action = await self.action_queue.get()
             executed = False
             for exchange_client in self.exchanges:
-                if action.exchange == exchange_client.exchange_id():
-                    exchange_client.execute(action)
+                if action.exchange == exchange_client.exchange_id:
+                    exchange_client.execute_action(action)
                     executed = True
                     break
             if not executed:
@@ -127,6 +128,8 @@ class Trader:
             run_task = e.run_task()
             self._tasks.append(run_task)
 
+        self._algorithm.initialize(self.state, self._timer, self._add_action)
+        self._timer.do_every(timedelta(seconds=10), self.log_status)
         self._tasks.extend(self._timer.tasks)
         self._tasks.append(asyncio.ensure_future(self._process_actions()))
         self._loop = asyncio.get_event_loop()
@@ -174,9 +177,16 @@ class Trader:
 
 if __name__ == "__main__":
     from kohuhu.gemini import GeminiExchange
+    from kohuhu.gdax import GdaxExchange
+    from kohuhu.arbitrage import OneWayPairArbitrage
     import kohuhu.credentials as credentials
     credentials.load_credentials()
-    creds = credentials.credentials_for('gemini_sandbox', owner='kevin')
+    gemini_creds = credentials.credentials_for('gemini_sandbox', owner='kevin')
+    gdax_creds = credentials.credentials_for('gdax_sandbox', owner='kevin')
     # Start the trader without any algorithm set.
-    trader = Trader(algorithm=None, exchanges=[GeminiExchange(api_credentials=creds, sandbox=True)])
+    algo = OneWayPairArbitrage(exchange_to_buy_on="gemini_sandbox",
+                               exchange_to_sell_on="gdax_sandbox")
+    trader = Trader(algorithm=algo,
+        exchanges=[GeminiExchange(api_credentials=gemini_creds, sandbox=True),
+                   GdaxExchange(api_credentials=gdax_creds, sandbox=True)])
     trader.start()
