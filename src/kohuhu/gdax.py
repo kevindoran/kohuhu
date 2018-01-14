@@ -79,8 +79,7 @@ class GdaxExchange(ExchangeClient):
         self._message_queue = asyncio.Queue()
         self._background_task = None
         self._on_update_callback = lambda: None
-        self._create_actions = []
-        self._uuid_to_action = {}
+        self._create_actions_by_uuid = {}
         self._cancel_actions = {}
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
@@ -100,6 +99,13 @@ class GdaxExchange(ExchangeClient):
         """Sets the callback that is invoked when the state of the exchange
         changes. For example, the order book is updated, or an order is filled."""
         self._on_update_callback = callback
+
+    @staticmethod
+    def datetime_from_string(timestamp_str):
+        parsed = datetime.datetime.strptime(timestamp_str,
+                                                    "%Y-%m-%dT%H:%M:%S.%fZ")
+        return parsed
+
 
     async def run(self):
         """Run this Gdax exchange, listening for and processing websocket messages.
@@ -288,8 +294,7 @@ class GdaxExchange(ExchangeClient):
         what you have subscribed to.
 
         """
-        heartbeat_time = datetime.datetime.strptime(heartbeat['time'],
-                                                    "%Y-%m-%dT%H:%M:%S.%fZ")
+        heartbeat_time = self.datetime_from_string(heartbeat['time'])
         log.debug(f"Received heartbeat with time: {heartbeat_time}")
 
         # This is the first heartbeat, just set our last time value and return.
@@ -309,9 +314,64 @@ class GdaxExchange(ExchangeClient):
         # Set the new last heartbeat time.
         self._last_heartbeat_time = heartbeat_time
 
-    def _handle_order(self, order):
-        """TODO"""
-        raise NotImplementedError("Order handling has not been implemented")
+    def _handle_order(self, order_dict):
+        # Note: the Gdax documentation seems out of date compared to the
+        # actual response. There are more fields, and the fields are named
+        # differently.
+        type = order_dict['type']
+        product_id = order_dict['product_id']
+        # The docs say the id field is 'order_id' but the sandbox returns 'id'.
+        # order_id = order_dict['order_id']
+        order_id = order_dict['id']
+        client_order_id = order_dict['client_oid']
+        matching_action = self._create_actions_by_uuid[client_order_id]
+        side = exchanges.Side.BID if order_dict['side'] == 'buy' \
+            else exchanges.Side.ASK
+        # Price is not present for activate responses (when using stop orders).
+        # If stop orders are used, price needs to be within each of the if
+        # blocks.
+        price = Decimal(order_dict['price'])
+        # Unused
+        # time = self.datetime_from_string(order_dict['time'])
+        if type == 'received':
+            order_type = exchanges.Order.Type.LIMIT if \
+                order_dict['order_type'] == 'limit' else exchanges.Order.Type.MARKET
+            size = Decimal(order_dict['size'])
+            # Unused.
+            # How much quote currency will be used to buy or sell.
+            # funds = order['funds'] if order_type == 'market' else None
+            new_order = exchanges.Order()
+            new_order.price = price
+            new_order.amount = size
+            new_order.remaining = size
+            new_order.type = order_type
+            new_order.side = side
+            new_order.symbol = product_id
+            new_order.order_id = order_id
+            self.exchange_state.set_order(order_id, new_order)
+            matching_action.order = new_order
+        elif type == 'open':
+            order = self.exchange_state.order(order_id)
+            remaining_size = Decimal(order_dict['remaining_size'])
+            order.remaining = remaining_size
+            order.filled = order.amount - order.remaining
+        elif type == 'done':
+            order = self.exchange_state.order(order_id)
+            remaining_size = Decimal(order_dict['remaining_size'])
+            order.remaining = remaining_size
+            order.filled = order.amount - order.remaining
+            if order.remaining != Decimal(0):
+                order.status = exchanges.Order.Status.CANCELLED
+            else:
+                order.status = exchanges.Order.Status.CLOSED
+        elif type == 'match':
+            # I'm not sure, but I don't think we need to do anything here.
+            pass
+        elif type == 'change':
+            # I'm not sure, but I don't think we need to do anything here.
+            raise Exception("It was expected that we would never trade against "
+                            "ourselves.")
+
 
     def _handle_subscriptions(self, subscriptions):
         """Check that the subscription acknowledgement message matches our subscribe request"""
@@ -455,7 +515,6 @@ class GdaxExchange(ExchangeClient):
                                         f"'{action.exchange}' was given to "
                                         f"GDAX.")
         if type(action) == exchanges.CreateOrder:
-            self._create_actions.append(action)
             orders_path = "/orders"
             params = self._new_order_parameters(action)
             self._send_http_request(orders_path, params)
@@ -471,7 +530,7 @@ class GdaxExchange(ExchangeClient):
         # of the client order id.
         # https://stackoverflow.com/questions/47763321/gdax-api-request-returning-error-400-badrequest
         client_id = str(uuid.uuid4())
-        self._uuid_to_action[client_id] = create_order_action
+        self._create_actions_by_uuid[client_id] = create_order_action
         parameters['client_oid'] = client_id
         parameters['side'] = 'buy' if create_order_action.side == \
                                       exchanges.Side.BID else 'sell'
