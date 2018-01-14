@@ -319,12 +319,10 @@ class GdaxExchange(ExchangeClient):
         # actual response. There are more fields, and the fields are named
         # differently.
         type = order_dict['type']
+        if type == 'match':
+            return
         product_id = order_dict['product_id']
-        # The docs say the id field is 'order_id' but the sandbox returns 'id'.
-        # order_id = order_dict['order_id']
-        order_id = order_dict['id']
-        client_order_id = order_dict['client_oid']
-        matching_action = self._create_actions_by_uuid[client_order_id]
+        order_id = order_dict['order_id']
         side = exchanges.Side.BID if order_dict['side'] == 'buy' \
             else exchanges.Side.ASK
         # Price is not present for activate responses (when using stop orders).
@@ -349,7 +347,10 @@ class GdaxExchange(ExchangeClient):
             new_order.symbol = product_id
             new_order.order_id = order_id
             self.exchange_state.set_order(order_id, new_order)
+            client_order_id = order_dict['client_oid']
+            matching_action = self._create_actions_by_uuid[client_order_id]
             matching_action.order = new_order
+            matching_action.status = exchanges.Action.Status.SUCCESS
         elif type == 'open':
             order = self.exchange_state.order(order_id)
             remaining_size = Decimal(order_dict['remaining_size'])
