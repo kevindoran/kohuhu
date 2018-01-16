@@ -165,7 +165,7 @@ class ExchangeState:
         self._orders = {}
         self._balance = Balance()
         self.exchange_client = exchange_client
-        self.update_publisher = Publisher()
+        self.update_publisher = Publisher(id=exchange_id)
 
     def order_book(self, force_update=False):
         """The order book for the exchange."""
@@ -322,16 +322,13 @@ class ExchangeClient:
 class Publisher:
     """Calls registered callbacks."""
 
-    def __init__(self, data=None):
-        self._data = data
+    def __init__(self, id=None):
+        self._id = id
         self._update_callbacks = set()
 
-    def notify(self):
+    def notify(self, description=None):
         for c in self._update_callbacks:
-            if self._data:
-                c(id)
-            else:
-                c()
+            c(self._id, description)
 
     def add_callback(self, callback):
         self._update_callbacks.add(callback)

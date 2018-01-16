@@ -158,15 +158,19 @@ class OrderResponse:
         if 'avg_execution_price' in json_dict:
             response.avg_execution_price = \
                 Decimal(json_dict['avg_execution_price'])
-        # executed_amount
-        if 'executed_amount' in json_dict:
-            response.executed_amount = Decimal(json_dict['executed_amount'])
-        # remaining_amount
-        if 'remaining_amount' in json_dict:
-            response.remaining_amount = Decimal(json_dict['remaining_amount'])
         # original_amount
         if 'original_amount' in json_dict:
             response.original_amount = Decimal(json_dict['original_amount'])
+        # executed_amount
+        if 'executed_amount' in json_dict:
+            response.executed_amount = Decimal(json_dict['executed_amount'])
+        else:
+            response.executed_amount = Decimal(0)
+        # remaining_amount
+        if 'remaining_amount' in json_dict:
+            response.remaining_amount = Decimal(json_dict['remaining_amount'])
+        else:
+            response.remaining_amount = response.original_amount
         # price
         if 'price' in json_dict:
             response.price = Decimal(json_dict['price'])
@@ -306,8 +310,14 @@ class GeminiExchange(ExchangeClient):
             finally:
                 await self._orders_sock_info.ws.close()
 
+        async def first_notify():
+            await self.setup_event()
+            self.exchange_state.update_publisher.notify(
+                description="Initialized.")
+
         return asyncio.gather(listen_orders(), process_orders_coro,
-                              listen_market_data(), process_market_data_coro)
+                              listen_market_data(), process_market_data_coro,
+                              first_notify())
 
     async def _open_orders_websocket(self):
         """Opens the websocket for getting our order details.
@@ -412,6 +422,7 @@ class GeminiExchange(ExchangeClient):
         pending_callback = False
         while True:
             unparsed_message = await socket_info.queue.get()
+            print("Received: " + unparsed_message)
             response = json.loads(unparsed_message)
             # Sometimes the response is a list sometimes not. Convert to list.
             message_list = response if type(response) == list else [response]
@@ -558,8 +569,6 @@ class GeminiExchange(ExchangeClient):
             state_updated = True
         elif response_type == "accepted":
             # Create a new order. Mark the corresponding action as successful.
-            import pdb
-            pdb.set_trace()
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)
