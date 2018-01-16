@@ -558,6 +558,8 @@ class GeminiExchange(ExchangeClient):
             state_updated = True
         elif response_type == "accepted":
             # Create a new order. Mark the corresponding action as successful.
+            import pdb
+            pdb.set_trace()
             order_response = OrderResponse.from_json_dict(response)
             new_order = exchanges.Order()
             order_response.update_order(new_order)

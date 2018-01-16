@@ -116,12 +116,11 @@ def test_valid_orderbook(gdax_exchange):
         f"best_ask had quantity {best_ask.quantity} which is > than expected {max_expected_quote_quantity}"
 
 
-@pytest.mark.skip(reason="TODO debug: Getting BadRequest response from Gdax")
 @pytest.mark.asyncio
 async def test_execute_action(gdax_sandbox_exchange):
     gdax = gdax_sandbox_exchange
     lowest_ask_quote = gdax.exchange_state.order_book().asks()[0]
-    max_amount = Decimal("0.000001")
+    max_amount = Decimal("0.01")
     bid_amount = min(lowest_ask_quote.quantity, max_amount)
     bid_limit_action = exchanges.CreateOrder("gdax_sandbox",
                                              exchanges.Side.BID,
