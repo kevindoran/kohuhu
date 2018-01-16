@@ -1,9 +1,13 @@
 import pytest
 from kohuhu.gdax import GdaxExchange
 from kohuhu import credentials
+import kohuhu.exchanges as exchanges
+from decimal import Decimal
 import asyncio
 from kohuhu.custom_exceptions import MockError
 import logging
+from test.common import wait_until
+import test.common
 
 # Disable websockets debug logging for more comprehensible logs when using -s
 logger = logging.getLogger('websockets')
@@ -11,6 +15,8 @@ logger.setLevel(logging.ERROR)
 
 credentials.load_credentials('api_credentials.json')
 
+# TODO: Should be an env variable (or Tim should install proxy)
+test.common.enableProxy()
 
 @pytest.yield_fixture(scope='module')  # This scope needs to be >= any async fixtures.
 def event_loop():
@@ -20,12 +26,13 @@ def event_loop():
     loop.close()
 
 
+@pytest.mark.skip(reason="No real gdax credentials")
 @pytest.fixture(scope='module')
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_exchange():
     """Sets up the real Gdax exchange"""
     creds = credentials.credentials_for('gdax', owner="tim")
-    gdax = GdaxExchange(api_credentials=creds)
+    gdax = GdaxExchange(api_credentials=creds, sandbox=True)
     run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
@@ -39,9 +46,8 @@ async def gdax_exchange():
 @pytest.mark.timeout(5)  # Give it 5 seconds to connect
 async def gdax_sandbox_exchange():
     """Sets up the sandbox Gdax exchange"""
-    sandbox_url = 'wss://ws-feed-public.sandbox.gdax.com'
-    creds = credentials.credentials_for('gdax_sandbox', owner="tim")
-    gdax = GdaxExchange(api_credentials=creds, websocket_url=sandbox_url)
+    creds = credentials.credentials_for('gdax_sandbox', owner="kevin")
+    gdax = GdaxExchange(api_credentials=creds, sandbox=True)
     run_gdax_task = asyncio.ensure_future(gdax.run())
     await gdax.order_book_ready.wait()
     yield gdax
@@ -60,12 +66,13 @@ def test_gdax_callback_error_propagation():
 
     with pytest.raises(MockError):
         loop = asyncio.get_event_loop()
-        gdax = GdaxExchange()
+        gdax = GdaxExchange(credentials.credentials_for("gdax_sandbox"),
+                            sandbox=True)
         gdax.set_on_change_callback(raise_test_error)
         run_gdax_task = asyncio.ensure_future(gdax.run_task())
         loop.run_until_complete(run_gdax_task)
 
-
+@pytest.mark.skip(reason="No real gdax credentials")
 def test_valid_orderbook(gdax_exchange):
     """This tests that the orderbook from the real Gdax exchange has values that we would expect for
     bitcoin. If this test fails it doesn't guarantee that our program has a bug, but it is very likely."""
@@ -107,3 +114,30 @@ def test_valid_orderbook(gdax_exchange):
         f"best_bid had quantity {best_bid.quantity} which is > than expected {max_expected_quote_quantity}"
     assert best_ask.quantity < max_expected_quote_quantity, \
         f"best_ask had quantity {best_ask.quantity} which is > than expected {max_expected_quote_quantity}"
+
+
+@pytest.mark.asyncio
+async def test_execute_action(gdax_sandbox_exchange):
+    gdax = gdax_sandbox_exchange
+    lowest_ask_quote = gdax.exchange_state.order_book().asks()[0]
+    max_amount = Decimal("0.01")
+    bid_amount = min(lowest_ask_quote.quantity, max_amount)
+    bid_limit_action = exchanges.CreateOrder("gdax_sandbox",
+                                             exchanges.Side.BID,
+                                             exchanges.Order.Type.LIMIT,
+                                             bid_amount,
+                                             price=lowest_ask_quote.price)
+    order_count = len(gdax.exchange_state._orders)
+    assert order_count == 0
+    gdax.execute_action(bid_limit_action)
+    success = await wait_until(lambda: len(gdax.exchange_state._orders))
+    assert success
+
+@pytest.mark.skip(reason="TODO debug: Getting a 'fatal write error on socket transport'")
+@pytest.mark.asyncio
+async def test_get_balance(gdax_sandbox_exchange):
+    gdax_sandbox_exchange.update_balance()
+    balance = gdax_sandbox_exchange.exchange_state.balance()
+    assert balance
+    assert balance.free("USD") > Decimal(0)
+    assert balance.free("BTC") > Decimal(0)

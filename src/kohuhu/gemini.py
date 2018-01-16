@@ -15,6 +15,7 @@ import hmac
 from hashlib import sha384
 import kohuhu.credentials as credentials
 import requests
+from kohuhu.custom_exceptions import *
 
 from decimal import Decimal
 
@@ -157,15 +158,19 @@ class OrderResponse:
         if 'avg_execution_price' in json_dict:
             response.avg_execution_price = \
                 Decimal(json_dict['avg_execution_price'])
-        # executed_amount
-        if 'executed_amount' in json_dict:
-            response.executed_amount = Decimal(json_dict['executed_amount'])
-        # remaining_amount
-        if 'remaining_amount' in json_dict:
-            response.remaining_amount = Decimal(json_dict['remaining_amount'])
         # original_amount
         if 'original_amount' in json_dict:
             response.original_amount = Decimal(json_dict['original_amount'])
+        # executed_amount
+        if 'executed_amount' in json_dict:
+            response.executed_amount = Decimal(json_dict['executed_amount'])
+        else:
+            response.executed_amount = Decimal(0)
+        # remaining_amount
+        if 'remaining_amount' in json_dict:
+            response.remaining_amount = Decimal(json_dict['remaining_amount'])
+        else:
+            response.remaining_amount = response.original_amount
         # price
         if 'price' in json_dict:
             response.price = Decimal(json_dict['price'])
@@ -204,7 +209,7 @@ class GeminiExchange(ExchangeClient):
     standard_wss_url_base = "wss://api.gemini.com"
     sandbox_wss_url_base = 'wss://api.sandbox.gemini.com'
 
-    def __init__(self, sandbox=False):
+    def __init__(self, api_credentials=None, sandbox=False):
         exchange_id = self.sandbox_exchange_name if sandbox \
             else self.standard_exchange_name
         super().__init__(exchange_id)
@@ -214,6 +219,8 @@ class GeminiExchange(ExchangeClient):
         self._wss_url_base = self.sandbox_wss_url_base if sandbox \
             else self.standard_wss_url_base
         self.exchange_state = ExchangeState(self.exchange_id, self)
+        self._api_credentials = api_credentials
+        self._authenticate = self._api_credentials is not None
         self._create_actions = []
         self._cancel_actions = {}
         self._orders_sock_info = self.SocketInfo()
@@ -234,7 +241,7 @@ class GeminiExchange(ExchangeClient):
         """Encode the payload for sending and calculate it's hash signature."""
         payload_bytes = json.dumps(dict_payload).encode(encoding)
         b64 = base64.b64encode(payload_bytes)
-        creds = credentials.credentials_for(self.exchange_id)
+        creds = self._api_credentials
         secret_bytes = creds.api_secret.encode(encoding)
         signature = hmac.new(secret_bytes, b64, sha384).hexdigest()
         return b64, signature
@@ -263,7 +270,7 @@ class GeminiExchange(ExchangeClient):
             'nonce': self._nonce()
         }
         payload.update(parameters)
-        creds = credentials.credentials_for(self.exchange_id)
+        creds = self._api_credentials
         b64, signature = self._encode_and_sign(payload, encoding)
         headers = {
             # I think these two headers are set by default.
@@ -277,19 +284,10 @@ class GeminiExchange(ExchangeClient):
 
     def run_task(self):
         """Returns the future for running the Gemini exchange client."""
-        process_orders_coro = self._process_queue(callback=self._handle_orders,
-                                socket_info=self._orders_sock_info)
         process_market_data_coro = self._process_queue(
                                 callback=self._handle_market_data,
                                 socket_info=self._market_data_sock_info,
                                 has_heartbeat_seq=False)
-
-        async def listen_orders():
-            try:
-                await self._open_orders_websocket()
-                await self._listen_on_orders()
-            finally:
-                await self._orders_sock_info.ws.close()
 
         async def listen_market_data():
             try:
@@ -298,8 +296,28 @@ class GeminiExchange(ExchangeClient):
             finally:
                 await self._market_data_sock_info.ws.close()
 
+        # If we are not authenticated, return just the market data coroutines.
+        if not self._authenticate:
+            return asyncio.gather(listen_market_data(), process_market_data_coro)
+
+        process_orders_coro = self._process_queue(callback=self._handle_orders,
+                                                  socket_info=self._orders_sock_info)
+
+        async def listen_orders():
+            try:
+                await self._open_orders_websocket()
+                await self._listen_on_orders()
+            finally:
+                await self._orders_sock_info.ws.close()
+
+        async def first_notify():
+            await self.setup_event()
+            self.exchange_state.update_publisher.notify(
+                description="Initialized.")
+
         return asyncio.gather(listen_orders(), process_orders_coro,
-                              listen_market_data(), process_market_data_coro)
+                              listen_market_data(), process_market_data_coro,
+                              first_notify())
 
     async def _open_orders_websocket(self):
         """Opens the websocket for getting our order details.
@@ -311,7 +329,7 @@ class GeminiExchange(ExchangeClient):
         orders_path = '/v1/order/events'
         headers = self._create_headers(orders_path, encoding="utf-8")
         # Filter order events so that only events from this key are sent.
-        creds = credentials.credentials_for(self.exchange_id)
+        creds = self._api_credentials
         order_events_url = self._wss_url_base + orders_path + \
                            f'?heartbeat=true&apiSessionFilter={creds.api_key}'
 
@@ -350,7 +368,8 @@ class GeminiExchange(ExchangeClient):
         #      setup on the first received message is not premature, even if it
         #      is just a heartbeat.
         await self._market_data_sock_info.ready.wait()
-        await self._orders_sock_info.ready.wait()
+        if self._authenticate:
+            await self._orders_sock_info.ready.wait()
 
     def is_setup(self):
         """Returns whether the exchange client is fully initialized.
@@ -403,6 +422,7 @@ class GeminiExchange(ExchangeClient):
         pending_callback = False
         while True:
             unparsed_message = await socket_info.queue.get()
+            print("Received: " + unparsed_message)
             response = json.loads(unparsed_message)
             # Sometimes the response is a list sometimes not. Convert to list.
             message_list = response if type(response) == list else [response]
@@ -532,7 +552,7 @@ class GeminiExchange(ExchangeClient):
                 raise Exception("1 session filter should have been registered."
                                 f"{len(api_session_filter)} were registered.")
             accepted_key = api_session_filter[0]
-            if accepted_key != credentials.credentials_for(self.exchange_id)\
+            if accepted_key != self._api_credentials\
                     .api_key:
                 raise Exception("The whitelisted api session key does not "
                                 "match our session key.")
@@ -652,9 +672,14 @@ class GeminiExchange(ExchangeClient):
 
     def execute_action(self, action):
         """Ren the given action on this exchange."""
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
         if action.exchange != self.exchange_id:
-            raise Exception(f"An action for exchange '{action.exchange}' was "
-                            "given to GeminiExchange.")
+            raise InvalidOperationError(f"An action for exchange "
+                                        f"'{action.exchange}' was given to "
+                                        f"GeminiExchange.")
         if type(action) == exchanges.CreateOrder:
             self._create_actions.append(action)
             new_order_path = "/v1/order/new"
@@ -707,8 +732,6 @@ class GeminiExchange(ExchangeClient):
         Returns:
             (response): the response (from the requests package).
         """
-        if not parameters:
-            parameters = None
         url = self._rest_url_base + path
         success = False
         response = None
@@ -731,6 +754,11 @@ class GeminiExchange(ExchangeClient):
         pass
 
     def update_balance(self):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
+
         check_balance_path = "/v1/balances"
         r = self._post_http_request(check_balance_path)
         self._update_balance_from_response(r.json())
@@ -749,5 +777,9 @@ class GeminiExchange(ExchangeClient):
             self.exchange_state.balance().set_on_hold(currency, on_hold)
 
     def update_orders(self):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
         # The orders are updated automatically.
         pass

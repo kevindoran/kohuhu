@@ -51,7 +51,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                 on.
         """
         super().__init__()
-        self.poll_period = datetime.timedelta(milliseconds=900)
+        self.poll_period = datetime.timedelta(seconds=3)
         self.exchange_buy_on = exchange_to_buy_on
         self.exchange_sell_on = exchange_to_sell_on
         # TODO:
@@ -59,7 +59,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         # for us to understand how much we are spending. It also more directly
         # relates to how much we will have to deposit into our account.
         # self.bid_amount_in_usd = Decimal(500)
-        self.bid_amount_in_btc = Decimal("0.5")
+        self.bid_amount_in_btc = Decimal("0.01")
         self.order_update_threshold = Decimal("0.1")  # percent
         self.profit_target = Decimal("0.05")  # percent.
         self._live_limit_action = None
@@ -68,6 +68,23 @@ class OneWayPairArbitrage(trader.Algorithm):
         self._market_orders_made = []
         self._add_action_callback = None
         self._state = None
+
+    def status_str(self):
+        status = ""
+        if self._state:
+            exch_1_state = self._state.for_exchange(self.exchange_buy_on)
+            exch_2_state = self._state.for_exchange(self.exchange_sell_on)
+            if exch_1_state.order_book().asks():
+                status += "Min ask on exchange 1: " \
+                          f"{exch_1_state.order_book().asks()[0]}\n"
+            if exch_2_state.order_book().bids():
+                status += "Max bid on exchange 2: " \
+                          f"{exch_2_state.order_book().bids()[0]}\n"
+            order_id = None
+            if self._live_limit_action and self._live_limit_action.order:
+                order_id = self._live_limit_action.order.order_id
+                status += f"Live order ID on exchange 1: {order_id}"
+        return status
 
     def initialize(self, state, timer, add_action_callback):
         self._state = state
@@ -80,12 +97,18 @@ class OneWayPairArbitrage(trader.Algorithm):
                     .format(self.exchange_buy_on, self.exchange_sell_on,
                             ",".join((e for e in state.exchanges()))))
         state.for_exchange(self.exchange_buy_on).update_publisher.add_callback(
-            self.on_data)
+            self.on_update)
         state.for_exchange(self.exchange_buy_on).update_publisher.add_callback(
-            self.on_data)
-        # timer.do_every(self.poll_period, self.on_data)
+            self.on_update)
+        timer.do_every(self.poll_period, self.on_timer)
 
-    def on_data(self, time_now=None):
+    def on_timer(self, time):
+        self.on_data()
+
+    def on_update(self, publisher_id, update_description):
+        self.on_data()
+
+    def on_data(self):
         # Create a bid limit action if there is none.
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.
@@ -265,7 +288,8 @@ class OneWayPairArbitrage(trader.Algorithm):
         Returns:
             (CreateOrder): the bid limit order that was created.
         """
-        balance = data_slice.for_exchange(self.exchange_buy_on).balance
+        balance = data_slice.for_exchange(self.exchange_buy_on).balance(
+            force_update=True)
         order_book = data_slice.for_exchange(self.exchange_sell_on).order_book()
         sell_price = self._calculate_effective_sell_price(
             self.bid_amount_in_btc, order_book)
@@ -275,7 +299,7 @@ class OneWayPairArbitrage(trader.Algorithm):
                                                     sell_price,
                                                     self.profit_target)
         btc_amount = self.bid_amount_in_btc
-        usd_balance = balance().free('USD')
+        usd_balance = balance.free('USD')
 
         # TODO: is it okay to assume that the fees are not on top, and thus they
         # will not cause us to run our balance negative with this calculation?
@@ -286,10 +310,14 @@ class OneWayPairArbitrage(trader.Algorithm):
         max_can_afford = (usd_balance / btc_amount).quantize(three_dp,
                                                              decimal.ROUND_DOWN)
         btc_amount = min(btc_amount, max_can_afford)
+        if btc_amount == Decimal(0):
+            raise Exception("Not enough funds to buy on "
+                            f"{self.exchange_buy_on}.")
         # Create and return the action.
+        rounded_price = currency.round_to_cents(bid_price)
         bid_action = CreateOrder(self.exchange_buy_on, Side.BID,
                                  Order.Type.LIMIT, amount=btc_amount,
-                                 price=bid_price)
+                                 price=rounded_price)
         self._last_limit_order_update_at = data_slice.timestamp
         return bid_action
 
@@ -358,18 +386,18 @@ class OneWayPairArbitrage(trader.Algorithm):
         effective_market_price = Decimal(0)
         remaining = sell_amount
         while capacity_counted < sell_amount:
-            if bid_index >= len(order_book.bid_prices()):
+            if bid_index >= len(order_book.bids()):
                 raise Exception("Something is not right: there is only {} BTC "
                                 "buy orders on an exchange. We wont be able to "
                                 "fill our market order. Something is probably "
                                 "broken.".format(capacity_counted))
             # TODO: can we get a clean way to separate the amount and price
             # information better?
-            highest_bid = order_book.bid_by_index(bid_index)
-            amount_used = min(highest_bid.amount, remaining)
+            highest_bid = order_book.bids()[bid_index]
+            amount_used = min(highest_bid.quantity, remaining)
             fraction_of_trade = amount_used / sell_amount
             effective_market_price += fraction_of_trade * highest_bid.price
-            capacity_counted += highest_bid.amount
+            capacity_counted += highest_bid.quantity
             bid_index += 1
         return effective_market_price
 

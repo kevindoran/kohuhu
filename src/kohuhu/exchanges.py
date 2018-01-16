@@ -161,10 +161,11 @@ class ExchangeState:
         # ccxt structure.
         self.exchange_id = exchange_id
         self._order_book = OrderBook()
+        # Maybe this should be public
         self._orders = {}
         self._balance = Balance()
         self.exchange_client = exchange_client
-        self.update_publisher = Publisher()
+        self.update_publisher = Publisher(id=exchange_id)
 
     def order_book(self, force_update=False):
         """The order book for the exchange."""
@@ -253,6 +254,10 @@ class CreateOrder(Action):
         self.side = side
         self.type = type
         self.order = None
+        if side == Order.Type.LIMIT and price is None:
+            raise Exception("Price must be specified when making a limit "
+                            "order.")
+
         # Note: this property might move to the Action class.
         self.status = self.Status.PENDING
 
@@ -317,16 +322,13 @@ class ExchangeClient:
 class Publisher:
     """Calls registered callbacks."""
 
-    def __init__(self, data=None):
-        self._data = data
+    def __init__(self, id=None):
+        self._id = id
         self._update_callbacks = set()
 
-    def notify(self):
+    def notify(self, description=None):
         for c in self._update_callbacks:
-            if self._data:
-                c(id)
-            else:
-                c()
+            c(self._id, description)
 
     def add_callback(self, callback):
         self._update_callbacks.add(callback)

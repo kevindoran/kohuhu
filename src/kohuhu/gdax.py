@@ -3,6 +3,7 @@ import json
 import websockets
 from decimal import Decimal
 import logging
+import kohuhu.exchanges as exchanges
 from kohuhu.exchanges import ExchangeState
 import time
 import base64
@@ -11,39 +12,81 @@ import hashlib
 from kohuhu.custom_exceptions import InvalidOperationError
 import asyncio
 import datetime
+import requests
+from requests.auth import AuthBase
+import uuid
 
 log = logging.getLogger(__name__)
 
 
+class CoinbaseExchangeAuth(AuthBase):
+    def __init__(self, api_key, secret_key, passphrase):
+        self.api_key = api_key
+        self.secret_key = secret_key
+        self.passphrase = passphrase
+
+    def __call__(self, request):
+        timestamp = str(time.time())
+        message = timestamp + request.method + request.path_url + (
+                request.body or '')
+        hmac_key = base64.b64decode(self.secret_key)
+        signature = hmac.new(hmac_key, message.encode("ascii"), hashlib.sha256)
+        signature_b64 = base64.b64encode(signature.digest()).decode('utf-8')
+        request.headers.update({
+            'CB-ACCESS-SIGN': signature_b64,
+            'CB-ACCESS-TIMESTAMP': timestamp,
+            'CB-ACCESS-KEY': self.api_key,
+            'CB-ACCESS-PASSPHRASE': self.passphrase,
+            'Content-Type': 'application/json'
+        })
+        return request
+
+
 class GdaxExchange(ExchangeClient):
-    exchange_id = 'gdax'
-    default_websocket_url = 'wss://ws-feed.gdax.com'
+    """Gdax exchange client.
 
-    def __init__(self,
-                 api_credentials=None,
-                 websocket_url=default_websocket_url):
-        """Creates a new Gdax Exchange
+       Attributes:
+           exchange_state (ExchangeState):   The exchange state
+           order_book_ready (bool):  Indicates that this exchange is both
+               connected and has fully populated the orderbook.
+    """
+    standard_exchange_name = 'gdax'
+    sandbox_exchange_name = 'gdax_sandbox'
 
-        Attributes:
-            exchange_state    The exchange state
-            order_book_ready  Indicates that this exchange is both connected and has fully populated the orderbook
-        """
+    standard_websocket_url = 'wss://ws-feed.gdax.com'
+    standard_rest_api_url = 'https://api.gdax.com'
+
+    sandbox_websocket_url = 'wss://ws-feed-public.sandbox.gdax.com'
+    sandbox_rest_api_url = 'https://api-public.sandbox.gdax.com'
+
+    def __init__(self, api_credentials=None, sandbox=False):
+        """Creates a new Gdax Exchange."""
+        if sandbox:
+            self.exchange_id = self.sandbox_exchange_name
+            self._websocket_url = self.sandbox_websocket_url
+            self._rest_url = self.sandbox_rest_api_url
+        else:
+            self.exchange_id = self.standard_exchange_name
+            self._websocket_url = self.standard_websocket_url
+            self._rest_url = self.standard_rest_api_url
         super().__init__(self.exchange_id)
-        # Public attributes
         self.exchange_state = ExchangeState(self.exchange_id, self)
         self.order_book_ready = asyncio.Event()
-
-        # Private attributes
-        self._channels = ['user', 'heartbeat', 'level2']  # user channel will only receive messages if authenticated
+        self._channels = ['user', 'heartbeat',
+                          'level2']  # user channel will only receive messages if authenticated
         self._symbol = 'BTC-USD'
-        self._websocket_url = websocket_url
         self._websocket = None
         self._message_queue = asyncio.Queue()
         self._background_task = None
-        self._on_update_callback = lambda: None
-
+        self._create_actions_by_uuid = {}
+        self._cancel_actions = {}
         self._api_credentials = api_credentials
         self._authenticate = self._api_credentials is not None
+        self._coinbase_authenticator = None
+        if self._authenticate:
+            self._coinbase_authenticator = CoinbaseExchangeAuth(
+                api_credentials.api_key, api_credentials.api_secret,
+                api_credentials.passphrase)
 
         self._exchange_latency_limit = 10  # Seconds we are willing to be behind the exchange (+ the interval below)
         self._exchange_latency_check_interval = 5  # How often we check if we've gone beyond this limit
@@ -51,10 +94,12 @@ class GdaxExchange(ExchangeClient):
 
         self._running = False
 
-    def set_on_change_callback(self, callback):
-        """Sets the callback that is invoked when the state of the exchange
-        changes. For example, the order book is updated, or an order is filled."""
-        self._on_update_callback = callback
+    @staticmethod
+    def datetime_from_string(timestamp_str):
+        parsed = datetime.datetime.strptime(timestamp_str,
+                                                    "%Y-%m-%dT%H:%M:%S.%fZ")
+        return parsed
+
 
     async def run(self):
         """Run this Gdax exchange, listening for and processing websocket messages.
@@ -97,7 +142,8 @@ class GdaxExchange(ExchangeClient):
             # Then listen for messages, this will run forever.
             await self._listen_websocket_feed()
 
-        return asyncio.gather(listen_websocket(), process_messages_coro, watchdog_coro)
+        return asyncio.gather(listen_websocket(), process_messages_coro,
+                              watchdog_coro)
 
     async def stop(self):
         """Stop all background tasks and close the websocket"""
@@ -128,9 +174,10 @@ class GdaxExchange(ExchangeClient):
         Gdax uses a single websocket to feed all information.
         """
         if self._websocket is None:
-            raise InvalidOperationError("Websocket is not connected. You must call "
-                                        "connect_websocket() before listening on the "
-                                        "websocket channel.")
+            raise InvalidOperationError(
+                "Websocket is not connected. You must call "
+                "connect_websocket() before listening on the "
+                "websocket channel.")
         try:
             # This blocks waiting for a new websocket message
             async for message in self._websocket:
@@ -177,20 +224,21 @@ class GdaxExchange(ExchangeClient):
         return auth_params
 
     async def _process_websocket_messages(self):
-        """Processes messages added to the message queue by the websocket task. This calls
-        the _handle_message() method for each message then calls the _on_update_callback().
-        If multiple messages are received at once (or in a short interval), _on_update_callback
-        will only be called once"""
+        """Process messages added to the message queue by the websocket task.
+
+        This calls the _handle_message() method for each message then updates
+        subscribers. If multiple messages are received at once (or in a short
+        interval), subscribers will only be notified once."""
         while True:
             message = await self._message_queue.get()
             self._handle_message(message)
             if not self._message_queue.empty():
                 # If we've already got another update, then update our
-                # orderbook before we call the callback.
+                # orderbook before we call notify subscribers.
                 continue
 
             # Call the callback, our orderbook is now up to date.
-            self._on_update_callback()
+            self.exchange_state.update_publisher.notify()
 
     def _handle_message(self, msg):
         """The main handler for all websocket messages. This method will call
@@ -247,7 +295,7 @@ class GdaxExchange(ExchangeClient):
         what you have subscribed to.
 
         """
-        heartbeat_time = datetime.datetime.strptime(heartbeat['time'], "%Y-%m-%dT%H:%M:%S.%fZ")
+        heartbeat_time = self.datetime_from_string(heartbeat['time'])
         log.debug(f"Received heartbeat with time: {heartbeat_time}")
 
         # This is the first heartbeat, just set our last time value and return.
@@ -257,7 +305,8 @@ class GdaxExchange(ExchangeClient):
 
         # Check that this heartbeat is within 0.5 - 1.5s of the last.
         delta = heartbeat_time - self._last_heartbeat_time
-        if delta < datetime.timedelta(seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
+        if delta < datetime.timedelta(
+                seconds=0.5) or delta > datetime.timedelta(seconds=1.5):
             error_message = f"Heartbeat time value <0.5s or > 1.5s from last heartbeat time value. " \
                             f"Last value: {self._last_heartbeat_time}, current value: {heartbeat_time}"
             log.error(error_message)
@@ -266,9 +315,66 @@ class GdaxExchange(ExchangeClient):
         # Set the new last heartbeat time.
         self._last_heartbeat_time = heartbeat_time
 
-    def _handle_order(self, order):
-        """TODO"""
-        raise NotImplementedError("Order handling has not been implemented")
+    def _handle_order(self, order_dict):
+        # Note: the Gdax documentation seems out of date compared to the
+        # actual response. There are more fields, and the fields are named
+        # differently.
+        type = order_dict['type']
+        if type == 'match':
+            return
+        product_id = order_dict['product_id']
+        order_id = order_dict['order_id']
+        side = exchanges.Side.BID if order_dict['side'] == 'buy' \
+            else exchanges.Side.ASK
+        # Price is not present for activate responses (when using stop orders).
+        # If stop orders are used, price needs to be within each of the if
+        # blocks. Price is also not present for market orders.
+        price = Decimal(order_dict.get('price', 0))
+        # Unused
+        # time = self.datetime_from_string(order_dict['time'])
+        if type == 'received':
+            order_type = exchanges.Order.Type.LIMIT if \
+                order_dict['order_type'] == 'limit' else exchanges.Order.Type.MARKET
+            size = Decimal(order_dict['size'])
+            # Unused.
+            # How much quote currency will be used to buy or sell.
+            # funds = order['funds'] if order_type == 'market' else None
+            new_order = exchanges.Order()
+            new_order.price = price
+            new_order.amount = size
+            new_order.remaining = size
+            new_order.filled = Decimal(0)
+            new_order.type = order_type
+            new_order.side = side
+            new_order.symbol = product_id
+            new_order.order_id = order_id
+            self.exchange_state.set_order(order_id, new_order)
+            client_order_id = order_dict['client_oid']
+            matching_action = self._create_actions_by_uuid[client_order_id]
+            matching_action.order = new_order
+            matching_action.status = exchanges.Action.Status.SUCCESS
+        elif type == 'open':
+            order = self.exchange_state.order(order_id)
+            remaining_size = Decimal(order_dict['remaining_size'])
+            order.remaining = remaining_size
+            order.filled = order.amount - order.remaining
+        elif type == 'done':
+            order = self.exchange_state.order(order_id)
+            remaining_size = Decimal(order_dict['remaining_size'])
+            order.remaining = remaining_size
+            order.filled = order.amount - order.remaining
+            if order.remaining != Decimal(0):
+                order.status = exchanges.Order.Status.CANCELLED
+            else:
+                order.status = exchanges.Order.Status.CLOSED
+        elif type == 'match':
+            # I'm not sure, but I don't think we need to do anything here.
+            pass
+        elif type == 'change':
+            # I'm not sure, but I don't think we need to do anything here.
+            raise Exception("It was expected that we would never trade against "
+                            "ourselves.")
+
 
     def _handle_subscriptions(self, subscriptions):
         """Check that the subscription acknowledgement message matches our subscribe request"""
@@ -366,8 +472,113 @@ class GdaxExchange(ExchangeClient):
                 continue
             utc_now = datetime.datetime.utcnow()
             time_since_last_heartbeat = utc_now - self._last_heartbeat_time
-            if time_since_last_heartbeat > datetime.timedelta(seconds=self._exchange_latency_limit):
+            if time_since_last_heartbeat > datetime.timedelta(
+                    seconds=self._exchange_latency_limit):
                 error_message = f"No heartbeat message processed in the last {time_since_last_heartbeat} " \
                                 f"seconds. Time now:{utc_now}, last heartbeat: {self._last_heartbeat_time}"
                 log.error(error_message)
                 raise Exception(error_message)
+
+    def _send_http_request(self, path, json_body=None, method='post'):
+        url = self._rest_url + path
+        function_to_call = getattr(requests, method)
+        data = json.dumps(json_body) if json_body else None
+        response = function_to_call(url, data=data,
+                                    auth=self._coinbase_authenticator)
+        if response.status_code != requests.codes.ok:
+            raise Exception(f"Request for {url} failed. Response code received:"
+                            f" {response.status_code}. Content: {response.content}")
+        return response
+
+    def update_balance(self):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
+
+        accounts_path = "/accounts"
+        response = self._send_http_request(accounts_path, method='get')
+        self._update_balance_from_response(response.json())
+
+    def _update_balance_from_response(self, json_data):
+        # Note: this method is split out from update_balance for easy testing.
+        for account in json_data:
+            currency = account['currency']
+            # Balance: total funds in the account.
+            balance = Decimal(account['balance'])
+            # Holds: funds on hold (not available for use).
+            # Note: the Gdax example uses "hold" as the key, but the description
+            # states "holds" as the key.
+            holds = Decimal(account['hold'])
+            available = Decimal(account['available'])
+            # Unused
+            # id = account['id']
+            # margin_enabled = account['margin_enabled']
+            # funded_amount = account['funded_amount']
+            # default_amount = account['default_amount']
+            self.exchange_state.balance().set_free(currency, available)
+            self.exchange_state.balance().set_on_hold(currency, holds)
+
+    def execute_action(self, action):
+        if not self._authenticate:
+            raise InvalidOperationError("Exchange is not authenticated. You must authenticate this "
+                                        "exchange by supplying apiCredentials to the constructor "
+                                        "before calling this method.")
+
+        if action.exchange != self.exchange_id:
+            raise InvalidOperationError(f"An action for exchange "
+                                        f"'{action.exchange}' was given to "
+                                        f"GDAX.")
+        if type(action) == exchanges.CreateOrder:
+            orders_path = "/orders"
+            params = self._new_order_parameters(action)
+            self._send_http_request(orders_path, params)
+        elif type(action) == exchanges.CancelOrder:
+            self._cancel_actions[action.order_id] = action
+            cancel_order_path = "/orders/" + action.order_id
+            self._send_http_request(cancel_order_path, method='delete')
+
+    def _new_order_parameters(self, create_order_action):
+        """Generates the API parameters to execute the given create action."""
+        parameters = {}
+        # Inspired from SO, Gdax has unspecified strict requirements on the form
+        # of the client order id.
+        # https://stackoverflow.com/questions/47763321/gdax-api-request-returning-error-400-badrequest
+        client_id = str(uuid.uuid4())
+        self._create_actions_by_uuid[client_id] = create_order_action
+        parameters['client_oid'] = client_id
+        parameters['side'] = 'buy' if create_order_action.side == \
+                                      exchanges.Side.BID else 'sell'
+        parameters['product_id'] = "BTC-USD"
+        # Self-trade prevention flag. In the event that our trade would be
+        # matched with another trade of ours:
+        #     dc: decrease and cancel (default).
+        #     co: cancel oldest.
+        #     cn: cancel newest.
+        #     cb: cancel both.
+        # Unused:
+        # parameters['stp'] = None  # The default seems fine. We shouldn't
+        # ever encounter this.
+        if create_order_action.type == exchanges.Order.Type.LIMIT:
+            parameters['type'] = 'limit'
+            parameters['price'] = str(create_order_action.price)
+            parameters['size'] = str(create_order_action.amount)
+            # Time in force:
+            #   GTC: good till cancelled.
+            #   GTT: good till time.
+            #   IOC: immediate or cancel.
+            #   FOK: fill or kill. Same as IOC except the whole order must
+            #        me filled instead of just cancelling the remaining, as with
+            #        IOC.
+            parameters['time_in_force'] = 'GTC'
+            # Unused:
+            # parameters['cancel_after']
+            # parameters['post_only']
+        else:
+            # TODO: we should probably be using a limit order with a
+            # 'immediate or cancel' flag.
+            parameters['type'] = 'market'
+            parameters['size'] = str(create_order_action.amount)
+            # Unused:
+            # parameters['funds']
+        return parameters
