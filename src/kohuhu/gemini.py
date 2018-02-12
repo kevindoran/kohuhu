@@ -422,7 +422,7 @@ class GeminiExchange(ExchangeClient):
         pending_callback = False
         while True:
             unparsed_message = await socket_info.queue.get()
-            print("Received: " + unparsed_message)
+            #log.debug("Received: " + unparsed_message)
             response = json.loads(unparsed_message)
             # Sometimes the response is a list sometimes not. Convert to list.
             message_list = response if type(response) == list else [response]

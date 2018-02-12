@@ -85,20 +85,20 @@ class Trader:
 
     def _add_action(self, action):
         """Adds an action to the action queue."""
-        print(f"Adding action to the queue: {action}.")
+        log.info(f"Adding action to the queue: {action}.")
         self.action_queue.put_nowait(action)
 
     def log_updates(self, id, description):
-        print(f"Update received from {id}. Description: {description}.")
+        log.info(f"Update received from {id}. Description: {description}.")
         # TODO: How to print with logging?
         #log.info("Update received.")
 
     def log_status(self, time):
         if self._algorithm:
-            print("Trader status update:")
-            print(self._algorithm.status_str() + "\n")
+            log.info("Trader status update:")
+            log.info(self._algorithm.status_str() + "\n")
         else:
-            print("No algorithm loaded.")
+            log.info("No algorithm loaded.")
 
     async def _process_actions(self):
         """Call exchange_client.execute() for each action created by the algo.
@@ -175,7 +175,27 @@ class Trader:
             self._loop.close()
 
 
+def init_loggers():
+    console_output = logging.StreamHandler()
+    console_output.setLevel(logging.INFO)
+    console_output_formatter = logging.Formatter('%(message)s')
+    console_output.setFormatter(console_output_formatter)
+
+    file_output = logging.FileHandler('./logs/kohuhu.log')
+    file_output.setLevel(logging.DEBUG)
+    # Add timestamp & level to logs
+    file_output_formatter = logging.Formatter('%(asctime)s:%(levelname)s: %(message)s')
+    file_output.setFormatter(file_output_formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(console_output)
+    root_logger.addHandler(file_output)
+    root_logger.setLevel(logging.DEBUG)  # We need this so that all logs are propogated to the handlers
+
+
 if __name__ == "__main__":
+    init_loggers()
+    log.info("Starting trader")
     from kohuhu.gemini import GeminiExchange
     from kohuhu.gdax import GdaxExchange
     from kohuhu.arbitrage import OneWayPairArbitrage

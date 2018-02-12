@@ -11,6 +11,7 @@ import datetime
 import decimal
 import kohuhu.currency as currency
 
+log = logging.getLogger(__name__)
 
 class OneWayPairArbitrage(trader.Algorithm):
     """Carries out buy->sell arbitrage in one direction between two exchanges.
@@ -113,22 +114,19 @@ class OneWayPairArbitrage(trader.Algorithm):
         if not self._live_limit_action:
             # Calculate the BTC market price on the exchange to sell on.
             self._live_limit_action = self._create_bid_limit_order(self._state)
-            print("Putting one on")
+            log.info("Adding a live limit action")
             self._add_action_callback(self._sanity_check_action(
                 self._live_limit_action))
 
         # There is a bid limit action.
         if self._live_limit_action.status == CreateOrder.Status.FAILED:
-            logging.warning("Resetting the algorithm as the limit bid order "
+            log.warning("Resetting the algorithm as the limit bid order "
                             "failed to be placed.")
-            print("Resetting the algorithm as the limit bid order "
-                  "failed to be placed.")
             self._live_limit_action = None
             return
         elif self._live_limit_action.status == CreateOrder.Status.PENDING:
             # The order hasn't been placed yet. Nothing to do.
-            logging.info("Waiting for order action to be placed.")
-            print("Waiting for order action to be placed.")
+            log.info("Waiting for order action to be placed.")
             return
         else:
             # The order action must have been successfully executed.
@@ -246,9 +244,9 @@ class OneWayPairArbitrage(trader.Algorithm):
         # TODO: need to insure we don't have any rounding issues here.
         fill_diff = latest_fill_amount - self._previous_fill_amount
         if fill_diff == Decimal(0):
-            logging.info("The limit buy order has not been filled any further.")
+            log.info("The limit buy order has not been filled any further.")
         else:
-            logging.info("The limit buy order ({}) has been filled more (prev "
+            log.info("The limit buy order ({}) has been filled more (prev "
                          "fill: {}, current: {}). About to place a market sell "
                          "order for {} on {}.".format(
                 self._live_limit_action.order.order_id,
@@ -264,7 +262,7 @@ class OneWayPairArbitrage(trader.Algorithm):
             self._market_orders_made.append(market_ask_action)
             self._previous_fill_amount = latest_fill_amount
         if latest_fill_amount == self.bid_amount_in_btc:
-            logging.info("Our buy limit order ({}) on {} has been fully filled."
+            log.info("Our buy limit order ({}) on {} has been fully filled."
                          .format(self._live_limit_action.order.order_id,
                                  self.exchange_buy_on))
             # If the order is filled, it should be marked as closed.
@@ -357,7 +355,7 @@ class OneWayPairArbitrage(trader.Algorithm):
         profit_diff = abs(expected_profit_factor - target_profit_factor)
         should_cancel = profit_diff > self.order_update_threshold
         if should_cancel:
-            logging.info("Profit has changed by {:.2%}. Expected profit factor"
+            log.info("Profit has changed by {:.2%}. Expected profit factor"
                          ": {:.2}. Target profit factor: {:.2}. Order should be"
                          " cancelled.".format(profit_diff,
                                               expected_profit_factor,
