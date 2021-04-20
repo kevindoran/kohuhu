@@ -13,7 +13,7 @@ idna==2.6
 multidict==3.3.2
 pkg-resources==0.0.0
 pluggy==0.6.0
-py==1.5.2
+py==1.10.0
 pycares==2.3.0
 pycparser==2.18
 pytest==3.3.1
