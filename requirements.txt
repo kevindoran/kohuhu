@@ -22,7 +22,7 @@ requests==2.18.4
 six==1.11.0
 sortedcontainers==1.5.9
 tox==2.9.1
-urllib3==1.22
+urllib3==1.26.5
 virtualenv==15.1.0
 websockets==4.0.1
 yarl==0.16.0
